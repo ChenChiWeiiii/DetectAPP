@@ -208,6 +208,16 @@ public class MainActivity extends AppCompatActivity {
             float speed = location.getSpeed() * 3.6f;
             tvSpeed.setText(String.format("時速：%.1f km/h", speed));
         }
+        public void onProviderEnabled(@NonNull String provider) {
+        }
+
+        @Override
+        public void onProviderDisabled(@NonNull String provider) {
+        }
+
+        @Override
+        public void onStatusChanged(String provider, int status, Bundle extras) {
+        }
     };
 
     private void loadSettingsFromPreferences() {
