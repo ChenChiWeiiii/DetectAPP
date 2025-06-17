@@ -1,0 +1,150 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/sign_up_layout"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#FFFFFF">
+
+    <!-- 左上角裝飾圖片 -->
+    <ImageView
+        android:id="@+id/vector3"
+        android:layout_width="231dp"
+        android:layout_height="wrap_content"
+        android:layout_alignParentStart="true"
+        android:layout_alignParentTop="true"
+        android:layout_marginTop="0dp"
+        android:scaleType="fitXY"
+        android:src="@drawable/vector3"/>
+
+    <!-- 左下角裝飾圖片 -->
+    <ImageView
+        android:id="@+id/vector4"
+        android:layout_width="100dp"
+        android:layout_height="196dp"
+        android:layout_alignParentStart="true"
+        android:layout_alignParentBottom="true"
+        android:src="@drawable/vector4"
+        android:scaleType="fitXY" />
+
+    <!-- ScrollView 包住整個註冊區域 -->
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_marginTop="160dp"
+        android:layout_marginBottom="60dp"
+        android:layout_alignParentTop="true"
+        android:layout_alignParentBottom="true"
+        android:layout_alignParentStart="true"
+        android:layout_alignParentEnd="true">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="24dp">
+
+            <TextView
+                android:id="@+id/signupTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Create Account"
+                android:textSize="24sp"
+                android:textStyle="bold"
+                android:layout_marginTop="48dp"
+                android:layout_gravity="center_horizontal" />
+
+            <EditText
+                android:id="@+id/et_signup_userID"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="32dp"
+                android:background="@drawable/rounded_edittext"
+                android:elevation="4dp"
+                android:hint="Username"
+                android:inputType="textPersonName"
+                android:padding="16dp" />
+
+            <EditText
+                android:id="@+id/et_signup_email"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:background="@drawable/rounded_edittext"
+                android:elevation="4dp"
+                android:hint="Email"
+                android:inputType="textEmailAddress"
+                android:padding="16dp" />
+
+            <EditText
+                android:id="@+id/et_signup_password"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:background="@drawable/rounded_edittext"
+                android:elevation="4dp"
+                android:hint="Password"
+                android:inputType="textPassword"
+                android:padding="16dp" />
+
+            <EditText
+                android:id="@+id/et_signup_checkpassword"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:background="@drawable/rounded_edittext"
+                android:elevation="4dp"
+                android:hint="Confirm Password"
+                android:inputType="textPassword"
+                android:padding="16dp" />
+
+            <!-- 漸層小按鈕 -->
+            <LinearLayout
+                android:id="@+id/btn_signup_signup"
+                android:layout_width="wrap_content"
+                android:layout_height="43dp"
+                android:layout_marginTop="24dp"
+                android:layout_marginLeft="127dp"
+                android:layout_gravity="center_horizontal"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:clickable="true"
+                android:focusable="true"
+                android:background="@drawable/gradient_button">
+
+                <!-- Sign in 純文字 -->
+                <TextView
+                    android:id="@+id/signInText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Sign Up"
+                    android:textColor="#FFFFFF"
+                    android:textSize="14sp"
+                    android:paddingStart="16dp"
+                    android:paddingEnd="8dp" />
+
+                <!-- 只有箭頭的 TextView -->
+                <TextView
+                    android:id="@+id/signInArrow"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="→"
+                    android:textColor="#FFFFFF"
+                    android:textSize="14sp"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="16dp" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/tv_back"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Already have an account? Login"
+                android:textColor="#1E88E5"
+                android:layout_marginTop="16dp"
+                android:layout_gravity="center_horizontal" />
+
+        </LinearLayout>
+    </ScrollView>
+
+</RelativeLayout>

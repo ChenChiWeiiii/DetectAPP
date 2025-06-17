@@ -1,0 +1,94 @@
+## Ignore Android Studio/IntelliJ project files
+*.iml
+.gradle
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+
+## Gradle wrapper
+/gradle/wrapper/gradle-wrapper.jar
+/gradle/wrapper/gradle-wrapper.properties
+
+## Built application files
+*.apk
+*.ap_ 
+*.aab
+
+## Files for the Dalvik VM
+*.dex
+
+## Java class files
+*.class
+
+## Generated files
+bin/
+/gen/
+/out/
+
+## Signing files
+*.jks
+*.keystore
+
+## Log files
+*.log
+
+## Android Studio profiler
+*.hprof
+
+## NDK
+obj/
+*.so
+
+## Navigation editor temp files
+.navigation/
+
+## Keystore files
+*.jks
+*.keystore
+
+## Kotlin
+/.kotlin/
+
+## Misc
+*.orig
+*.tmp
+*.tmp.*
+*~ 
+*.swp
+
+## OS-specific
+# Mac OS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Linux
+*~
+
+## IntelliJ
+.idea/**/workspace.xml
+.idea/**/tasks.xml
+.idea/**/dictionaries
+.idea/**/shelf
+
+## Firebase Crashlytics intermediate snapshots
+crashlytics-build.properties
+
+## Android Jetpack Compose
+**/compose-build/*
+
+## Captain’s log
+captains.log

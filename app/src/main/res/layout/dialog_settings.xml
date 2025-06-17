@@ -1,0 +1,150 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@android:color/white"
+    android:orientation="vertical"
+    android:padding="24dp">
+
+    <!-- 標題區塊 -->
+    <RelativeLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingBottom="16dp">
+
+        <TextView
+            android:id="@+id/tvTitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_centerHorizontal="true"
+            android:text="設定"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <ImageButton
+            android:id="@+id/btnCloseDialog"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:layout_alignParentEnd="true"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:src="@android:drawable/ic_menu_close_clear_cancel"
+            android:contentDescription="關閉" />
+    </RelativeLayout>
+
+    <!-- 偵測靈敏度 -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="8dp"
+        android:text="偵測靈敏度"
+        android:textSize="18sp" />
+
+    <RadioGroup
+        android:id="@+id/radioGroupSensitivity"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
+
+        <androidx.appcompat.widget.AppCompatRadioButton
+            android:id="@+id/radioLow"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:button="@drawable/radio_gradient"
+            android:text="低"
+            android:padding="8dp" />
+
+        <androidx.appcompat.widget.AppCompatRadioButton
+            android:id="@+id/radioMedium"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:button="@drawable/radio_gradient"
+            android:text="中"
+            android:padding="8dp" />
+
+        <androidx.appcompat.widget.AppCompatRadioButton
+            android:id="@+id/radioHigh"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:button="@drawable/radio_gradient"
+            android:text="高"
+            android:padding="8dp" />
+    </RadioGroup>
+
+    <!-- 提醒方式 -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:layout_marginBottom="8dp"
+        android:text="提醒方式"
+        android:textSize="18sp" />
+
+    <!-- 語音提醒 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="語音" />
+
+        <androidx.appcompat.widget.SwitchCompat
+            android:id="@+id/switchVoice"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:thumb="@drawable/switch_thumb_gradient"
+            android:track="@drawable/switch_track_gradient" />
+    </LinearLayout>
+
+    <!-- 震動提醒 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="震動" />
+
+        <androidx.appcompat.widget.SwitchCompat
+            android:id="@+id/switchVibration"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:thumb="@drawable/switch_thumb_gradient"
+            android:track="@drawable/switch_track_gradient" />
+    </LinearLayout>
+
+    <!-- 儲存與登出按鈕 -->
+    <androidx.appcompat.widget.AppCompatButton
+        android:id="@+id/btnSave"
+        android:layout_width="match_parent"
+        android:layout_height="36dp"
+        android:layout_marginTop="16dp"
+        android:background="@drawable/gradient_button"
+        android:backgroundTint="@null"
+        android:stateListAnimator="@null"
+        android:text="儲存"
+        android:textColor="#FFFFFF" />
+
+    <androidx.appcompat.widget.AppCompatButton
+        android:id="@+id/btnLogout"
+        android:layout_width="match_parent"
+        android:layout_height="36dp"
+        android:layout_marginTop="16dp"
+        android:background="@drawable/gradient_button"
+        android:backgroundTint="@null"
+        android:stateListAnimator="@null"
+        android:text="登出"
+        android:textColor="#FFFFFF" />
+
+</LinearLayout>

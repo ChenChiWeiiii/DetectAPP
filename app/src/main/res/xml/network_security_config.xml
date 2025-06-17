@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- 手機 -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">10.22.192.160</domain>
+    </domain-config>
+    <!-- 舊電腦 -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">10.0.2.2</domain>
+    </domain-config>
+    <!-- 現在的電腦 -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">192.168.17.27</domain>
+    </domain-config>
+</network-security-config>

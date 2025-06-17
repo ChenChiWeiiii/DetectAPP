@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/sign_in_layout"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#FFFFFF">
+
+    <!-- 左上角裝飾圖片 -->
+    <ImageView
+        android:id="@+id/vector1"
+        android:layout_width="match_parent"
+        android:layout_height="150dp"
+        android:layout_alignParentStart="true"
+        android:layout_alignParentTop="true"
+        android:scaleType="fitXY"
+        android:src="@drawable/vector1" />
+
+    <!-- 左下角裝飾圖片 -->
+    <ImageView
+        android:id="@+id/vector2"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_alignParentStart="true"
+        android:layout_alignParentBottom="true"
+        android:scaleType="fitXY"
+        android:src="@drawable/vector2" />
+
+    <!-- ScrollView 包住整個登入區域 -->
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_marginTop="200dp"
+        android:layout_marginBottom="100dp"
+        android:layout_alignParentStart="true"
+        android:layout_alignParentEnd="true"
+        android:layout_alignParentTop="true"
+        android:layout_alignParentBottom="true">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="24dp">
+
+            <TextView
+                android:id="@+id/loginTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Hello"
+                android:textSize="36sp"
+                android:textStyle="bold"
+                android:layout_marginTop="48dp"
+                android:layout_gravity="center_horizontal" />
+
+            <TextView
+                android:id="@+id/loginTitle2"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Sign in to your account"
+                android:textSize="24sp"
+                android:textStyle="bold"
+                android:layout_marginTop="0dp"
+                android:layout_gravity="center_horizontal" />
+
+            <EditText
+                android:id="@+id/et_signin_email"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="32dp"
+                android:background="@drawable/rounded_edittext"
+                android:elevation="4dp"
+                android:hint="Email"
+                android:inputType="textEmailAddress"
+                android:padding="16dp" />
+
+            <EditText
+                android:id="@+id/et_signin_password"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:background="@drawable/rounded_edittext"
+                android:elevation="4dp"
+                android:hint="Password"
+                android:inputType="textPassword"
+                android:padding="16dp" />
+
+            <TextView
+                android:id="@+id/forgotPassword"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Forgot Password?"
+                android:textColor="#1E88E5"
+                android:layout_marginTop="8dp"
+                android:layout_gravity="end" />
+
+            <!-- 漸層容器：文字在左、箭頭在右 -->
+            <LinearLayout
+                android:id="@+id/btn_signin_signin"
+                android:layout_width="wrap_content"
+                android:layout_height="43dp"
+                android:layout_marginTop="24dp"
+                android:layout_marginLeft="127dp"
+                android:layout_gravity="center_horizontal"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:clickable="true"
+                android:focusable="true"
+                android:background="@drawable/gradient_button">
+
+                <!-- Sign in 純文字 -->
+                <TextView
+                    android:id="@+id/signInText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Sign in"
+                    android:textColor="#FFFFFF"
+                    android:textSize="14sp"
+                    android:paddingStart="16dp"
+                    android:paddingEnd="8dp" />
+
+                <!-- 只有箭頭的 TextView -->
+                <TextView
+                    android:id="@+id/signInArrow"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="→"
+                    android:textColor="#FFFFFF"
+                    android:textSize="14sp"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="16dp" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/tv_signin_signup"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Don't have an account? Sign Up"
+                android:textColor="#1E88E5"
+                android:layout_marginTop="16dp"
+                android:layout_gravity="center_horizontal" />
+
+        </LinearLayout>
+    </ScrollView>
+
+</RelativeLayout>

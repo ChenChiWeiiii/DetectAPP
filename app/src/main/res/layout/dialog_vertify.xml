@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/dialog_bg"
+    android:elevation="8dp"
+    android:padding="24dp">
+
+    <!-- 標題列 -->
+    <RelativeLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingBottom="16dp">
+
+        <TextView
+            android:id="@+id/tvDialogTitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_centerHorizontal="true"
+            android:text="信箱驗證"
+            android:textSize="20sp"
+            android:textStyle="bold"
+            android:textColor="#333333" />
+
+        <ImageButton
+            android:id="@+id/btnCloseDialog"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:layout_alignParentEnd="true"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:src="@android:drawable/ic_menu_close_clear_cancel"
+            android:contentDescription="關閉" />
+    </RelativeLayout>
+
+    <!-- 寄送郵件顯示 -->
+    <TextView
+        android:id="@+id/emailDisplay"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="驗證碼已寄至：example@gmail.com"
+        android:textColor="#555555"
+        android:textSize="14sp"
+        android:layout_marginBottom="16dp" />
+
+    <!-- 驗證碼輸入欄位 -->
+    <EditText
+        android:id="@+id/etCodeInput"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="輸入驗證碼"
+        android:inputType="number"
+        android:background="@drawable/rounded_edittext"
+        android:padding="16dp"
+        android:layout_marginBottom="16dp"
+        android:elevation="4dp" />
+
+    <!-- 確認驗證碼按鈕（漸層圓弧） -->
+    <androidx.appcompat.widget.AppCompatButton
+        android:id="@+id/btnVerify"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:layout_marginBottom="16dp"
+        android:background="@drawable/gradient_button"
+        android:backgroundTint="@null"
+        android:stateListAnimator="@null"
+        android:text="確認驗證碼"
+        android:textSize="14sp"
+        android:textColor="#FFFFFF" />
+
+    <!-- 重新發送驗證碼（純文字，動態套用漸層） -->
+    <TextView
+        android:id="@+id/tvResend"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="16dp"
+        android:gravity="center"
+        android:text="重新發送驗證碼"
+        android:textSize="14sp"
+        android:textColor="#A259FF"
+        android:clickable="true"
+        android:focusable="true"
+        android:background="?android:attr/selectableItemBackground" />
+
+    <!-- 倒數顯示（隱藏狀態下顯示倒數） -->
+    <TextView
+        android:id="@+id/tvCountdown"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="60 秒後可重新發送"
+        android:textColor="#888888"
+        android:textSize="12sp"
+        android:gravity="center"
+        android:visibility="gone" />
+
+</LinearLayout>
