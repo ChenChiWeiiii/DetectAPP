@@ -2,7 +2,7 @@
 <network-security-config>
     <!-- 手機 -->
     <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="true">10.22.192.160</domain>
+        <domain includeSubdomains="true">10.22.148.202</domain>
     </domain-config>
     <!-- 舊電腦 -->
     <domain-config cleartextTrafficPermitted="true">

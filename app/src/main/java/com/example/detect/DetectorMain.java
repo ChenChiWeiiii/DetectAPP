@@ -22,16 +22,15 @@ import java.util.Collections;
 public class DetectorMain {
     private static final String TAG = "DetectorMain";
     private static final int INPUT_SIZE = 640;
-    private static final float CONFIDENCE_THRESHOLD = 0.5f;
-
+    private static final float CONFIDENCE_THRESHOLD = 0.4f;
     private final Interpreter interpreter;
     private final List<String> labels1;
     private final List<String> labels2;
-    private final int outputChannels;
+    private final String modelType; // "traffic" or "person"
     private Bitmap resizedBitmap;
 
-    public DetectorMain(AssetManager assetManager, String modelName, int outputChannels) throws IOException {
-        this.outputChannels = outputChannels;
+    public DetectorMain(AssetManager assetManager, String modelName, String modelType) throws IOException {
+        this.modelType = modelType;
         MappedByteBuffer modelBuffer = loadModelFile(assetManager, modelName);
         interpreter = new Interpreter(modelBuffer);
 
@@ -42,7 +41,6 @@ public class DetectorMain {
         labels2 = new ArrayList<>(Collections.nCopies(80, null)); // YOLOv8 COCO 原始為 80 類
         labels2.set(0, "person");
         labels2.set(3, "motorcycle");
-
     }
 
     private MappedByteBuffer loadModelFile(AssetManager assetManager, String modelPath) throws IOException {
@@ -59,10 +57,9 @@ public class DetectorMain {
         ByteBuffer buffer = ByteBuffer.allocateDirect(4 * INPUT_SIZE * INPUT_SIZE * 3);
         buffer.order(ByteOrder.nativeOrder());
         int[] pixels = new int[INPUT_SIZE * INPUT_SIZE];
-        bitmap.getPixels(pixels, 0, INPUT_SIZE, 0, 0, INPUT_SIZE, INPUT_SIZE);
+        resized.getPixels(pixels, 0, INPUT_SIZE, 0, 0, INPUT_SIZE, INPUT_SIZE);
 
-        for (int i = 0; i < pixels.length; ++i) {
-            int pixel = pixels[i];
+        for (int pixel : pixels) {
             float r = ((pixel >> 16) & 0xFF) / 255.0f;
             float g = ((pixel >> 8) & 0xFF) / 255.0f;
             float b = (pixel & 0xFF) / 255.0f;
@@ -80,7 +77,7 @@ public class DetectorMain {
         ByteBuffer inputBuffer = bitmapToFloatBuffer(bitmap);
         List<Recognition> recognitions = new ArrayList<>();
 
-        if (shape[1] == 8400 && shape[2] == 6) { //best_float16_1.tflite
+        if (modelType.equals("traffic")) { //best_float16_1.tflite shape[1] == 8400 &&
 
             Log.d(TAG, "Model output shape: " + Arrays.toString(shape));
 
@@ -113,7 +110,7 @@ public class DetectorMain {
                 }
             }
         }
-        else if (shape[1] == 300 && shape[2] == 6) { // yolov8n_float16_1.tflite
+        else if (modelType.equals("person")) { // yolov8n_float16_1.tflite
             Log.d(TAG, "Model output shape: " + Arrays.toString(shape));
 
             float[][][] output = new float[1][300][6];

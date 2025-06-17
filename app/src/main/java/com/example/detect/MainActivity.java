@@ -10,17 +10,13 @@ import android.graphics.BitmapFactory;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
-import android.os.Build;
 import android.os.Bundle;
-import android.os.VibrationEffect;
-import android.os.Vibrator;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.widget.Button;
 import android.widget.ImageButton;
 import android.widget.RadioGroup;
-import androidx.appcompat.widget.SwitchCompat;
 import android.widget.TextView;
 import android.widget.Toast;
 import androidx.appcompat.app.AlertDialog;
@@ -28,7 +24,6 @@ import androidx.appcompat.app.AlertDialog;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.SwitchCompat;
-import androidx.camera.core.Camera;
 import androidx.camera.core.CameraSelector;
 import androidx.camera.core.ImageAnalysis;
 import androidx.camera.core.ImageProxy;
@@ -69,12 +64,9 @@ public class MainActivity extends AppCompatActivity {
     private int sensitivityLevel = 2;
     private boolean isVoiceEnabled = true;
     private boolean isVibrationEnabled = true;
-
     private SharedPreferences sharedPreferences;
     private static final String PREF_NAME = "AppSettings";
     private String userId;
-    private Vibrator vibrator;
-
     private LocationManager locationManager;
 
     @Override
@@ -92,8 +84,8 @@ public class MainActivity extends AppCompatActivity {
 
         setContentView(R.layout.activity_main);
         previewView = findViewById(R.id.previewView);
+        overlayView = findViewById(R.id.overlay);
         tvSpeed = findViewById(R.id.tv_speed);
-        vibrator = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
         sharedPreferences = getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
         loadSettingsFromPreferences();
 
@@ -109,71 +101,60 @@ public class MainActivity extends AppCompatActivity {
         }
 
         try {
-            detectorTraffic = new DetectorMain(getAssets(), "best_float16_1.tflite", 6); // 對應 6 個輸出通道
-            detectorPerson = new DetectorMain(getAssets(), "yolov8n_float16_1.tflite", 84); // 對應 84 個輸出通道
+            detectorTraffic = new DetectorMain(getAssets(), "best_float16_1.tflite", "traffic");
+            detectorPerson = new DetectorMain(getAssets(), "yolov8n_float16_1.tflite", "person");
+
         } catch (IOException e) {
             e.printStackTrace();
         }
-        if (detectorTraffic == null || detectorPerson == null) {//
+
+        if (detectorTraffic == null||detectorPerson == null ) {//
             Toast.makeText(this, "模型載入失敗，請確認 assets 資料夾內有 best_float16_1.tflite 和 yolo8n_float16_1.tflite", Toast.LENGTH_LONG).show();
             finish();
             return;
         }
-
         findViewById(R.id.btnSettings).setOnClickListener(v -> showSettingsDialog());
     }
 
     private void startCamera() {
-        ListenableFuture<ProcessCameraProvider> cameraProviderFuture =
-                ProcessCameraProvider.getInstance(this);
-
+        ListenableFuture<ProcessCameraProvider> cameraProviderFuture = ProcessCameraProvider.getInstance(this);
         cameraProviderFuture.addListener(() -> {
             try {
                 ProcessCameraProvider cameraProvider = cameraProviderFuture.get();
-
                 Preview preview = new Preview.Builder().build();
                 preview.setSurfaceProvider(previewView.getSurfaceProvider());
-
-                ImageAnalysis analysis =
-                        new ImageAnalysis.Builder()
-                                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                                .build();
-                analysis.setAnalyzer(ContextCompat.getMainExecutor(this), image -> {
-                    // 1. 轉成 Bitmap
-                    Bitmap bmp = imageToBitmap(image);
-                    // 2. 偵測
-                    List<DetectorMain.Recognition> results = runObjectDetection(bmp);
-                    // 3. 判斷是否同時偵測到交通號誌 + 行人
-                    boolean sawLight = false, sawPed = false;
-                    for (DetectorMain.Recognition r : results) {
-                        if ("traffic_light".equals(r.getTitle())) sawLight = true;
-                        if ("person".equals(r.getTitle()))       sawPed   = true;
-                    }
-                    // 4. 如果開啟「震動」且兩者都看到，就震動一次
-                    if (isVibrationEnabled && sawLight && sawPed) {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                            vibrator.vibrate(VibrationEffect.createOneShot(500, VibrationEffect.DEFAULT_AMPLITUDE));
-                        } else {
-                            vibrator.vibrate(500);
-                        }
-                    }
-                    image.close();
-                });
 
                 CameraSelector cameraSelector = new CameraSelector.Builder()
                         .requireLensFacing(CameraSelector.LENS_FACING_BACK)
                         .build();
 
+                ImageAnalysis analysis = new ImageAnalysis.Builder()
+                        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                        .build();
+
+                analysis.setAnalyzer(ContextCompat.getMainExecutor(this), image -> {
+                    Bitmap bitmap = imageToBitmap(image);
+                    List<DetectorMain.Recognition> resultsTraffic = detectorTraffic.detect(bitmap, previewView.getWidth(), previewView.getHeight());
+
+                    List<DetectorMain.Recognition> resultsPerson = detectorPerson.detect(bitmap, previewView.getWidth(), previewView.getHeight());
+
+                    List<DetectorMain.Recognition> allResults = new ArrayList<>();
+                    allResults.addAll(resultsTraffic);
+                    allResults.addAll(resultsPerson);
+
+                    overlayView.setResults(allResults);
+                    overlayView.invalidate();             // 觸發 onDraw()
+                    Log.d("Detection", "辨識到的物件數量：" + allResults.size());
+                    image.close();
+                });
                 cameraProvider.unbindAll();
-                // 同時綁定 Preview + Analysis
                 cameraProvider.bindToLifecycle(this, cameraSelector, preview, analysis);
 
             } catch (ExecutionException | InterruptedException e) {
-                Log.e("CameraX", "Camera 初始化失敗", e);
+                Log.e("CameraX", "Camera initialization failed", e);
             }
         }, ContextCompat.getMainExecutor(this));
     }
-
 
     private Bitmap imageToBitmap(ImageProxy image) {
         ImageProxy.PlaneProxy[] planes = image.getPlanes();
@@ -204,8 +185,8 @@ public class MainActivity extends AppCompatActivity {
         return BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.length);
     }
 
-    private List<DetectorMain.Recognition> runObjectDetection(Bitmap bitmap) {
-        if (detectorTraffic == null|| detectorPerson == null)  return new ArrayList<>();
+    private List<DetectorMain.Recognition> runObjectDetection(Bitmap bitmap) {//
+        if (detectorTraffic == null||detectorPerson == null)  return new ArrayList<>();
         List<DetectorMain.Recognition> results = new ArrayList<>();
         results.addAll(detectorTraffic.detect(bitmap, previewView.getWidth(), previewView.getHeight()));
         results.addAll(detectorPerson.detect(bitmap, previewView.getWidth(), previewView.getHeight()));
@@ -214,7 +195,6 @@ public class MainActivity extends AppCompatActivity {
 
     private void startLocationUpdates() {
         locationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
-
         try {
             locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000, 0, locationListener);
         } catch (SecurityException e) {
@@ -227,21 +207,6 @@ public class MainActivity extends AppCompatActivity {
         public void onLocationChanged(@NonNull Location location) {
             float speed = location.getSpeed() * 3.6f;
             tvSpeed.setText(String.format("時速：%.1f km/h", speed));
-        }
-
-        @Override
-        public void onStatusChanged(String provider, int status, Bundle extras) {
-            // 可留空
-        }
-
-        @Override
-        public void onProviderEnabled(@NonNull String provider) {
-            // 可留空
-        }
-
-        @Override
-        public void onProviderDisabled(@NonNull String provider) {
-            // 可留空
         }
     };
 
@@ -261,9 +226,8 @@ public class MainActivity extends AppCompatActivity {
 
     private void showSettingsDialog() {
         View view = LayoutInflater.from(this).inflate(R.layout.dialog_settings, null);
-
         RadioGroup radioGroup = view.findViewById(R.id.radioGroupSensitivity);
-        SwitchCompat switchVoice     = view.findViewById(R.id.switchVoice);
+        SwitchCompat switchVoice = view.findViewById(R.id.switchVoice);
         SwitchCompat switchVibration = view.findViewById(R.id.switchVibration);
         Button btnSave = view.findViewById(R.id.btnSave);
         Button btnLogout = view.findViewById(R.id.btnLogout);
@@ -353,8 +317,6 @@ public class MainActivity extends AppCompatActivity {
 
         dialog.show();
     }
-
-
 
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
