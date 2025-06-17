@@ -5,8 +5,8 @@ import retrofit2.converter.gson.GsonConverterFactory;
 
 public class RetrofitClient {
 
-    private static final String BASE_URL = "http://192.168.17.27:3000/Singup/";  //API address
-   //private static final String BASE_URL = "http://10.0.2.2:3000/";
+    private static final String BASE_URL = "http://10.22.192.160:3000/";  //API address
+    //private static final String BASE_URL = "http://10.0.2.2:3000/";
     private static Retrofit retrofit;
 
     public static Retrofit getInstance() {

@@ -225,8 +225,23 @@ public class MainActivity extends AppCompatActivity {
     private final LocationListener locationListener = new LocationListener() {
         @Override
         public void onLocationChanged(@NonNull Location location) {
-            float speed = location.getSpeed() * 3.6f; // m/s -> km/h
+            float speed = location.getSpeed() * 3.6f;
             tvSpeed.setText(String.format("時速：%.1f km/h", speed));
+        }
+
+        @Override
+        public void onStatusChanged(String provider, int status, Bundle extras) {
+            // 可留空
+        }
+
+        @Override
+        public void onProviderEnabled(@NonNull String provider) {
+            // 可留空
+        }
+
+        @Override
+        public void onProviderDisabled(@NonNull String provider) {
+            // 可留空
         }
     };
 
