@@ -15,6 +15,7 @@ public class SignInRequest {
         return email;
     }
 
+
     public String getPassword() {
         return password;
     }
