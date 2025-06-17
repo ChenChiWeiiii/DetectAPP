@@ -10,6 +10,9 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- 震動權限 -->
+    <uses-permission android:name="android.permission.VIBRATE"/>
+
     <!-- Android 9 以上需要指定 hardware -->
     <uses-feature android:name="android.hardware.camera.any" />
 

@@ -10,7 +10,10 @@ import android.graphics.BitmapFactory;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -70,6 +73,7 @@ public class MainActivity extends AppCompatActivity {
     private SharedPreferences sharedPreferences;
     private static final String PREF_NAME = "AppSettings";
     private String userId;
+    private Vibrator vibrator;
 
     private LocationManager locationManager;
 
@@ -89,7 +93,7 @@ public class MainActivity extends AppCompatActivity {
         setContentView(R.layout.activity_main);
         previewView = findViewById(R.id.previewView);
         tvSpeed = findViewById(R.id.tv_speed);
-
+        vibrator = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
         sharedPreferences = getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
         loadSettingsFromPreferences();
 
@@ -126,21 +130,50 @@ public class MainActivity extends AppCompatActivity {
         cameraProviderFuture.addListener(() -> {
             try {
                 ProcessCameraProvider cameraProvider = cameraProviderFuture.get();
+
                 Preview preview = new Preview.Builder().build();
                 preview.setSurfaceProvider(previewView.getSurfaceProvider());
+
+                ImageAnalysis analysis =
+                        new ImageAnalysis.Builder()
+                                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                                .build();
+                analysis.setAnalyzer(ContextCompat.getMainExecutor(this), image -> {
+                    // 1. 轉成 Bitmap
+                    Bitmap bmp = imageToBitmap(image);
+                    // 2. 偵測
+                    List<DetectorMain.Recognition> results = runObjectDetection(bmp);
+                    // 3. 判斷是否同時偵測到交通號誌 + 行人
+                    boolean sawLight = false, sawPed = false;
+                    for (DetectorMain.Recognition r : results) {
+                        if ("traffic_light".equals(r.getTitle())) sawLight = true;
+                        if ("person".equals(r.getTitle()))       sawPed   = true;
+                    }
+                    // 4. 如果開啟「震動」且兩者都看到，就震動一次
+                    if (isVibrationEnabled && sawLight && sawPed) {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            vibrator.vibrate(VibrationEffect.createOneShot(500, VibrationEffect.DEFAULT_AMPLITUDE));
+                        } else {
+                            vibrator.vibrate(500);
+                        }
+                    }
+                    image.close();
+                });
 
                 CameraSelector cameraSelector = new CameraSelector.Builder()
                         .requireLensFacing(CameraSelector.LENS_FACING_BACK)
                         .build();
 
                 cameraProvider.unbindAll();
-                cameraProvider.bindToLifecycle(this, cameraSelector, preview);
+                // 同時綁定 Preview + Analysis
+                cameraProvider.bindToLifecycle(this, cameraSelector, preview, analysis);
 
             } catch (ExecutionException | InterruptedException e) {
-                Log.e("CameraX", "Camera initialization failed", e);
+                Log.e("CameraX", "Camera 初始化失敗", e);
             }
         }, ContextCompat.getMainExecutor(this));
     }
+
 
     private Bitmap imageToBitmap(ImageProxy image) {
         ImageProxy.PlaneProxy[] planes = image.getPlanes();
