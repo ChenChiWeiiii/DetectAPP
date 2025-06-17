@@ -1,3 +1,9 @@
+# 放行 Gradle Wrapper 相關檔案
+!gradlew
+!gradlew.bat
+!gradle/wrapper/gradle-wrapper.jar
+!gradle/wrapper/gradle-wrapper.properties
+
 ## Ignore Android Studio/IntelliJ project files
 *.iml
 .gradle
@@ -14,8 +20,9 @@
 .externalNativeBuild
 
 ## Gradle wrapper
-/gradle/wrapper/gradle-wrapper.jar
-/gradle/wrapper/gradle-wrapper.properties
+#（已放行，移除以下兩行）
+#/gradle/wrapper/gradle-wrapper.jar
+#/gradle/wrapper/gradle-wrapper.properties
 
 ## Built application files
 *.apk
@@ -49,10 +56,6 @@ obj/
 
 ## Navigation editor temp files
 .navigation/
-
-## Keystore files
-*.jks
-*.keystore
 
 ## Kotlin
 /.kotlin/
