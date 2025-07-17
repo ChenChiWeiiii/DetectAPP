@@ -69,6 +69,7 @@ public class MainActivity extends AppCompatActivity {
     private PreviewView previewView;
     private OverlayView overlayView;
     private TextView tvSpeed;
+    private Bitmap currentBitmap = null;
     private static final int PERMISSION_CODE = 100;
     private DetectorMain detectorTraffic; // 紅綠燈 / 斑馬線
     private DetectorMain detectorPerson;  // 人 / 摩托車
@@ -155,6 +156,7 @@ public class MainActivity extends AppCompatActivity {
 
                 analysis.setAnalyzer(ContextCompat.getMainExecutor(this), image -> {
                     Bitmap bitmap = imageToBitmap(image);
+                    currentBitmap = bitmap;
                     List<DetectorMain.Recognition> resultsTraffic = detectorTraffic.detect(bitmap, previewView.getWidth(), previewView.getHeight());
 
                     List<DetectorMain.Recognition> resultsPerson = detectorPerson.detect(bitmap, previewView.getWidth(), previewView.getHeight());
@@ -406,6 +408,7 @@ public class MainActivity extends AppCompatActivity {
         boolean hasCrosswalk = false;
         float personDistance = -1f;
         float trafficDistance = estimateTrafficLightDistance(recognitions);
+        String trafficLightColor = "unknown";
 
         for (DetectorMain.Recognition r : recognitions) {
             if ("person".equals(r.getTitle())) {
@@ -417,6 +420,9 @@ public class MainActivity extends AppCompatActivity {
             }
             if ("crosswalk".equals(r.getTitle())) {
                 hasCrosswalk = true;
+            }
+            if ("traffic_light".equals(r.getTitle())) {
+                trafficLightColor = detectTrafficLightColor(currentBitmap, r);
             }
         }
 
@@ -433,8 +439,8 @@ public class MainActivity extends AppCompatActivity {
                     triggerVibrationOnce("中靈敏度：行人+斑馬線");
                 }
                 break;
-            case 1: // 低靈敏度：行人 + 斑馬線 + 綠燈（未實作）
-                if (hasCrosswalk && personDistance <= 10f && isGreenLight()) {
+            case 1: // 低靈敏度：行人 + 斑馬線 + 綠燈
+                if (hasCrosswalk && personDistance <= 10f && "green".equals(trafficLightColor)) {
                     triggerVibrationOnce("低靈敏度：綠燈+行人+斑馬線");
                 }
                 break;
@@ -453,7 +459,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void triggerVibrationOnce(String tag) {
         long now = System.currentTimeMillis();
-        if (now - lastVibrationTime < 3000) return;
+        if (now - lastVibrationTime < 3000) return;           
 
         if (isVibrationEnabled) {
             Vibrator vibrator = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
@@ -471,4 +477,6 @@ public class MainActivity extends AppCompatActivity {
         // TODO
         return false;
     }
+
+
 }
