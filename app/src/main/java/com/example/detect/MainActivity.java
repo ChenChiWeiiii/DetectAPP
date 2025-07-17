@@ -11,7 +11,10 @@ import android.graphics.RectF;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -76,6 +79,8 @@ public class MainActivity extends AppCompatActivity {
     private static final String PREF_NAME = "AppSettings";
     private String userId;
     private LocationManager locationManager;
+    private static final float DISTANCE_SCALING_FACTOR = 400.0f;
+    private long lastVibrationTime = 0;
 
     static{
         if (!OpenCVLoader.initDebug()) {
@@ -161,6 +166,7 @@ public class MainActivity extends AppCompatActivity {
                     overlayView.setResults(allResults);
                     overlayView.invalidate();             // 觸發 onDraw()
                     Log.d("Detection", "辨識到的物件數量：" + allResults.size());
+                    processPedestrianLogic(allResults);
                     image.close();
                 });
                 cameraProvider.unbindAll();
@@ -393,5 +399,76 @@ public class MainActivity extends AppCompatActivity {
             startCamera();
             startLocationUpdates();
         }
+    }
+
+    private void processPedestrianLogic(List<DetectorMain.Recognition> recognitions) {
+        boolean hasPerson = false;
+        boolean hasCrosswalk = false;
+        float personDistance = -1f;
+        float trafficDistance = estimateTrafficLightDistance(recognitions);
+
+        for (DetectorMain.Recognition r : recognitions) {
+            if ("person".equals(r.getTitle())) {
+                hasPerson = true;
+                float h = r.getLocation().height();
+                if (h > 0) {
+                    personDistance = DISTANCE_SCALING_FACTOR / h;
+                }
+            }
+            if ("crosswalk".equals(r.getTitle())) {
+                hasCrosswalk = true;
+            }
+        }
+
+        if (!hasPerson || personDistance < 0) return;
+
+        switch (sensitivityLevel) {
+            case 3: // 高靈敏度：只要行人接近即可提醒
+                if (personDistance <= 20f) {
+                    triggerVibrationOnce("高靈敏度：行人接近");
+                }
+                break;
+            case 2: // 中靈敏度：行人 + 斑馬線
+                if (hasCrosswalk && personDistance <= 15f) {
+                    triggerVibrationOnce("中靈敏度：行人+斑馬線");
+                }
+                break;
+            case 1: // 低靈敏度：行人 + 斑馬線 + 綠燈（未實作）
+                if (hasCrosswalk && personDistance <= 10f && isGreenLight()) {
+                    triggerVibrationOnce("低靈敏度：綠燈+行人+斑馬線");
+                }
+                break;
+        }
+    }
+
+    private float estimateTrafficLightDistance(List<DetectorMain.Recognition> recognitions) {
+        for (DetectorMain.Recognition r : recognitions) {
+            if (!"traffic_light".equals(r.getTitle())) continue;
+            float height = r.getLocation().height();
+            if (height <= 0) continue;
+            return DISTANCE_SCALING_FACTOR / height;
+        }
+        return -1f;
+    }
+
+    private void triggerVibrationOnce(String tag) {
+        long now = System.currentTimeMillis();
+        if (now - lastVibrationTime < 3000) return;
+
+        if (isVibrationEnabled) {
+            Vibrator vibrator = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator.vibrate(VibrationEffect.createOneShot(500, VibrationEffect.DEFAULT_AMPLITUDE));
+            } else {
+                vibrator.vibrate(500);
+            }
+            lastVibrationTime = now;
+            Log.d("提醒", "\uD83D\uDEA8 觸發提醒: " + tag);
+        }
+    }
+
+    private boolean isGreenLight() {
+        // TODO
+        return false;
     }
 }
