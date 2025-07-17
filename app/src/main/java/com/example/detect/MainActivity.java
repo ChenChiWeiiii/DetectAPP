@@ -7,6 +7,7 @@ import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.RectF;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
@@ -54,6 +55,13 @@ import android.graphics.Rect;
 import android.graphics.YuvImage;
 import java.io.ByteArrayOutputStream;
 
+import org.opencv.android.OpenCVLoader;
+import org.opencv.core.Core;
+import org.opencv.core.Mat;
+import org.opencv.core.Scalar;
+import org.opencv.android.Utils;
+import org.opencv.imgproc.Imgproc;
+
 public class MainActivity extends AppCompatActivity {
     private PreviewView previewView;
     private OverlayView overlayView;
@@ -68,6 +76,14 @@ public class MainActivity extends AppCompatActivity {
     private static final String PREF_NAME = "AppSettings";
     private String userId;
     private LocationManager locationManager;
+
+    static{
+        if (!OpenCVLoader.initDebug()) {
+            Log.e("OpenCV", "OpenCV initialization failed");
+        } else {
+            Log.d("OpenCV", "OpenCV initialized successfully");
+        }
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -185,6 +201,48 @@ public class MainActivity extends AppCompatActivity {
         return BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.length);
     }
 
+    private String detectTrafficLightColor(Bitmap fullBitmap, DetectorMain.Recognition lightBox) {
+        RectF box = lightBox.getLocation();
+
+        // 防止 crash：確認座標在圖內
+        int x = Math.max(0, (int) box.left);
+        int y = Math.max(0, (int) box.top);
+        int width = Math.min(fullBitmap.getWidth() - x, (int) (box.right - box.left));
+        int height = Math.min(fullBitmap.getHeight() - y, (int) (box.bottom - box.top));
+
+        if (width <= 0 || height <= 0) return "unknown";
+
+        Bitmap croppedBitmap = Bitmap.createBitmap(fullBitmap, x, y, width, height);
+        Mat mat = new Mat();
+        Utils.bitmapToMat(croppedBitmap, mat);
+        Imgproc.cvtColor(mat, mat, Imgproc.COLOR_RGB2HSV);
+
+        // HSV 範圍設定
+        Scalar lowerRed1 = new Scalar(0, 70, 50), upperRed1 = new Scalar(10, 255, 255);
+        Scalar lowerRed2 = new Scalar(160, 70, 50), upperRed2 = new Scalar(180, 255, 255);
+        Scalar lowerYellow = new Scalar(15, 100, 100), upperYellow = new Scalar(35, 255, 255);
+        Scalar lowerGreen = new Scalar(40, 50, 50), upperGreen = new Scalar(90, 255, 255);
+
+        // 產生遮罩
+        Mat redMask1 = new Mat(), redMask2 = new Mat(), yellowMask = new Mat(), greenMask = new Mat();
+        Core.inRange(mat, lowerRed1, upperRed1, redMask1);
+        Core.inRange(mat, lowerRed2, upperRed2, redMask2);
+        Core.inRange(mat, lowerYellow, upperYellow, yellowMask);
+        Core.inRange(mat, lowerGreen, upperGreen, greenMask);
+
+        Mat redMask = new Mat();
+        Core.addWeighted(redMask1, 1.0, redMask2, 1.0, 0.0, redMask);
+
+        int redCount = Core.countNonZero(redMask);
+        int yellowCount = Core.countNonZero(yellowMask);
+        int greenCount = Core.countNonZero(greenMask);
+
+        // 判斷最大者
+        if (redCount > yellowCount && redCount > greenCount) return "red";
+        else if (greenCount > redCount && greenCount > yellowCount) return "green";
+        else if (yellowCount > redCount && yellowCount > greenCount) return "yellow";
+        else return "unknown";
+    }
     private List<DetectorMain.Recognition> runObjectDetection(Bitmap bitmap) {//
         if (detectorTraffic == null||detectorPerson == null)  return new ArrayList<>();
         List<DetectorMain.Recognition> results = new ArrayList<>();
