@@ -24,8 +24,8 @@ public class DetectorMain {
     private static final int INPUT_SIZE = 640;
     private static final float CONFIDENCE_THRESHOLD = 0.4f;
     private final Interpreter interpreter;
-    private final List<String> labels1;
-    private final List<String> labels2;
+    private final List<String> labels;
+
     private final String modelType; // "traffic" or "person"
     private Bitmap resizedBitmap;
 
@@ -34,13 +34,10 @@ public class DetectorMain {
         MappedByteBuffer modelBuffer = loadModelFile(assetManager, modelName);
         interpreter = new Interpreter(modelBuffer);
 
-        labels1 = new ArrayList<>();
-        labels1.add("crosswalk");
-        labels1.add("traffic_light");
-
-        labels2 = new ArrayList<>(Collections.nCopies(80, null)); // YOLOv8 COCO 原始為 80 類
-        labels2.set(0, "person");
-        labels2.set(3, "motorcycle");
+        labels = new ArrayList<>();
+        labels.add("crosswalk");
+        labels.add("person");
+        labels.add("traffic_light");
     }
 
     private MappedByteBuffer loadModelFile(AssetManager assetManager, String modelPath) throws IOException {
@@ -77,7 +74,7 @@ public class DetectorMain {
         ByteBuffer inputBuffer = bitmapToFloatBuffer(bitmap);
         List<Recognition> recognitions = new ArrayList<>();
 
-        if (modelType.equals("traffic")) { //best_float16_1.tflite shape[1] == 8400 &&
+        if (modelType.equals("All")) {
 
             Log.d(TAG, "Model output shape: " + Arrays.toString(shape));
 
@@ -91,32 +88,6 @@ public class DetectorMain {
             interpreter.run(inputBuffer, output);
 
             for (int i = 0; i < numBoxes; i++) {
-                float y1 = output[0][i][0];
-                float x1 = output[0][i][1];
-                float y2 = output[0][i][2];
-                float x2 = output[0][i][3];
-                float confidence = output[0][i][4];
-                int classId = (int) output[0][i][5];
-
-                //float confidence = objConf * classProb;
-                if (confidence > CONFIDENCE_THRESHOLD) {
-                    float left = x1 * previewWidth;
-                    float top = y1 * previewHeight;
-                    float right = x2 * previewWidth;
-                    float bottom = y2 * previewHeight;
-
-                    RectF rect = new RectF(left, top, right, bottom);
-                    recognitions.add(new Recognition("" + i, labels1.get(classId), confidence, rect));
-                }
-            }
-        }
-        else if (modelType.equals("person")) { // yolov8n_float16_1.tflite
-            Log.d(TAG, "Model output shape: " + Arrays.toString(shape));
-
-            float[][][] output = new float[1][300][6];
-            interpreter.run(inputBuffer, output);
-
-            for (int i = 0; i < 300; i++) {
                 float x1 = output[0][i][0];
                 float y1 = output[0][i][1];
                 float x2 = output[0][i][2];
@@ -124,21 +95,24 @@ public class DetectorMain {
                 float confidence = output[0][i][4];
                 int classId = (int) output[0][i][5];
 
-                if (confidence < CONFIDENCE_THRESHOLD) continue;
-                if (classId != 0 && classId != 3) continue; // 只保留 person 和 motorcycle
+                if (confidence > CONFIDENCE_THRESHOLD) {
+                    float left = x1 * previewWidth;
+                    float top = y1 * previewHeight;
+                    float right = x2 * previewWidth;
+                    float bottom = y2 * previewHeight;
 
-                float left = x1 * previewWidth;
-                float top = y1 * previewHeight;
-                float right = x2 * previewWidth;
-                float bottom = y2 * previewHeight;
+                    // 限制在畫面內，避免框超出螢幕
+                    left = Math.max(0, left);
+                    top = Math.max(0, top);
+                    right = Math.min(previewWidth, right);
+                    bottom = Math.min(previewHeight, bottom);
 
-                String label = classId == 0 ? "person" : "motorcycle";
-                RectF rect = new RectF(left, top, right, bottom);
-                if (confidence > CONFIDENCE_THRESHOLD && (classId == 0 || classId == 3) && classId < labels2.size() && labels2.get(classId) != null) {
-                    recognitions.add(new Recognition("" + i, labels2.get(classId), confidence, rect));
+                    RectF rect = new RectF(left, top, right, bottom);
+                    recognitions.add(new Recognition("" + i, labels.get(classId), confidence, rect));
                 }
             }
         }
+//
         else {
             Log.e(TAG, "Unsupported model output shape: " + Arrays.toString(shape));
         }
