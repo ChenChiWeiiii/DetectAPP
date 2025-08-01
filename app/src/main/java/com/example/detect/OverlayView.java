@@ -50,15 +50,20 @@ public class OverlayView extends View {
             canvas.drawText(result.getTitle() + " (" + String.format("%.2f", result.getConfidence()) + ")",
                     box.left, box.top - 10, textPaint);
 
-            // 如果是紅綠燈，額外顯示距離資訊
+            // 顯示燈號和距離
             if ("traffic_light".equals(result.getTitle())) {
                 float height = box.height();
                 if (height > 0) {
-                    float estimatedDistance = 400.0f / height; // K = 400 可調整
-                    canvas.drawText(String.format("距離: %.1f m", estimatedDistance),
+                    float estimatedDistance = 400.0f / height;
+                    String color = result.getColor();
+                    if (color == null || "unknown".equals(color)) {
+                        color = "?";
+                    }
+                    canvas.drawText(String.format("%s  %.1f m", color, estimatedDistance),
                             box.left, box.bottom + 40, textPaint);
                 }
             }
+
         }
     }
 

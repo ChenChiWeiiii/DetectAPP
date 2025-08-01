@@ -22,6 +22,3 @@ dependencyResolutionManagement {
 rootProject.name = "Detect"
 include ':app'
 include ':sdk'
-include ':sdk'
-project(':sdk').projectDir = new File(rootDir, 'OpenCV/OpenCV/sdk/')
-include ':sdk2'

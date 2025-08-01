@@ -56,6 +56,13 @@ import retrofit2.Response;
 import android.graphics.ImageFormat;
 import android.graphics.Rect;
 import android.graphics.YuvImage;
+
+import org.opencv.android.Utils;
+import org.opencv.core.Core;
+import org.opencv.core.Mat;
+import org.opencv.core.Scalar;
+import org.opencv.imgproc.Imgproc;
+
 import java.io.ByteArrayOutputStream;
 
 import android.speech.tts.TextToSpeech;
@@ -79,6 +86,16 @@ public class MainActivity extends AppCompatActivity {
     private long lastVibrationTime = 0;
     private long lastSpeechTime = 0;
     private TextToSpeech textToSpeech;
+
+    private static final Scalar LOWER_RED1 = new Scalar(0, 70, 50);
+    private static final Scalar UPPER_RED1 = new Scalar(10, 255, 255);
+    private static final Scalar LOWER_RED2 = new Scalar(160, 70, 50);
+    private static final Scalar UPPER_RED2 = new Scalar(180, 255, 255);
+    private static final Scalar LOWER_YELLOW = new Scalar(15, 100, 100);
+    private static final Scalar UPPER_YELLOW = new Scalar(35, 255, 255);
+    private static final Scalar LOWER_GREEN = new Scalar(40, 50, 50);
+    private static final Scalar UPPER_GREEN = new Scalar(90, 255, 255);
+
 
 
 
@@ -364,6 +381,7 @@ public class MainActivity extends AppCompatActivity {
         float trafficDistance = estimateTrafficLightDistance(recognitions);
         String trafficLightColor = "unknown";
 
+
         for (DetectorMain.Recognition r : recognitions) {
             if ("person".equals(r.getTitle())) {
                 hasPerson = true;
@@ -375,11 +393,10 @@ public class MainActivity extends AppCompatActivity {
             if ("crosswalk".equals(r.getTitle())) {
                 hasCrosswalk = true;
             }
-
             if ("traffic_light".equals(r.getTitle())) {
                 trafficLightColor = detectTrafficLightColor(currentBitmap, r);
+                r.setColor(trafficLightColor);
             }
-
         }
 
         if (!hasPerson || personDistance < 0) return;
@@ -446,36 +463,47 @@ public class MainActivity extends AppCompatActivity {
     }
 
 
-    private String detectTrafficLightColor(Bitmap bitmap, DetectorMain.Recognition recognition) {
-        RectF rect = recognition.getLocation();
-        int centerX = (int) ((rect.left + rect.right) / 2);
-        int centerY = (int) ((rect.top + rect.bottom) / 2);
-        int radius = (int) (rect.height() / 6);
+    private String detectTrafficLightColor(Bitmap fullBitmap, DetectorMain.Recognition lightBox) {
+        RectF box = lightBox.getLocation();
 
-        int greenPixels = 0, redPixels = 0;
-        int totalPixels = 0;
+        int x = Math.max(0, (int) box.left);
+        int y = Math.max(0, (int) box.top);
+        int width = Math.min(fullBitmap.getWidth() - x, (int) (box.right - box.left));
+        int height = Math.min(fullBitmap.getHeight() - y, (int) (box.bottom - box.top));
 
-        for (int y = centerY - radius; y < centerY + radius; y++) {
-            for (int x = centerX - radius; x < centerX + radius; x++) {
-                if (x < 0 || y < 0 || x >= bitmap.getWidth() || y >= bitmap.getHeight()) continue;
-                int pixel = bitmap.getPixel(x, y);
-                int r = (pixel >> 16) & 0xFF;
-                int g = (pixel >> 8) & 0xFF;
-                int b = (pixel) & 0xFF;
+        if (width <= 0 || height <= 0) return "unknown";
 
-                if (r > 150 && g < 100) redPixels++;
-                if (g > 150 && r < 100) greenPixels++;
-                totalPixels++;
-            }
-        }
+        Bitmap croppedBitmap = Bitmap.createBitmap(fullBitmap, x, y, width, height);
+        Bitmap resizedBitmap = Bitmap.createScaledBitmap(croppedBitmap, width / 2, height / 2, false);
 
-        if (greenPixels > redPixels && greenPixels > totalPixels * 0.1) {
-            return "green";
-        } else if (redPixels > greenPixels && redPixels > totalPixels * 0.1) {
-            return "red";
-        } else {
-            return "unknown";
-        }
+        Mat mat = new Mat();
+        Utils.bitmapToMat(resizedBitmap, mat);
+        Imgproc.cvtColor(mat, mat, Imgproc.COLOR_RGB2HSV);
+
+        Scalar meanHSV = Core.mean(mat);
+        double hue = meanHSV.val[0];
+
+        if ((hue >= 0 && hue <= 10) || (hue >= 160 && hue <= 180)) return "red";
+        if (hue >= 15 && hue <= 35) return "yellow";
+        if (hue >= 40 && hue <= 90) return "green";
+
+        Mat redMask1 = new Mat(), redMask2 = new Mat(), yellowMask = new Mat(), greenMask = new Mat();
+        Core.inRange(mat, LOWER_RED1, UPPER_RED1, redMask1);
+        Core.inRange(mat, LOWER_RED2, UPPER_RED2, redMask2);
+        Core.inRange(mat, LOWER_YELLOW, UPPER_YELLOW, yellowMask);
+        Core.inRange(mat, LOWER_GREEN, UPPER_GREEN, greenMask);
+
+        Mat redMask = new Mat();
+        Core.addWeighted(redMask1, 1.0, redMask2, 1.0, 0.0, redMask);
+
+        int redCount = Core.countNonZero(redMask);
+        int yellowCount = Core.countNonZero(yellowMask);
+        int greenCount = Core.countNonZero(greenMask);
+
+        if (redCount > yellowCount && redCount > greenCount) return "red";
+        else if (greenCount > redCount && greenCount > yellowCount) return "green";
+        else if (yellowCount > redCount && yellowCount > greenCount) return "yellow";
+        else return "unknown";
     }
 
     @Override
