@@ -10,9 +10,8 @@
         <option name="modules">
           <set>
             <option value="$PROJECT_DIR$" />
-            <option value="$PROJECT_DIR$/OpenCV/OpenCV/sdk" />
             <option value="$PROJECT_DIR$/app" />
-            <option value="$PROJECT_DIR$/sdk2" />
+            <option value="$PROJECT_DIR$/sdk" />
           </set>
         </option>
       </GradleProjectSettings>
