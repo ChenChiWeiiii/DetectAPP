@@ -58,6 +58,7 @@ import android.graphics.Rect;
 import android.graphics.YuvImage;
 import java.io.ByteArrayOutputStream;
 
+import android.speech.tts.TextToSpeech;
 
 public class MainActivity extends AppCompatActivity {
     private PreviewView previewView;
@@ -74,7 +75,10 @@ public class MainActivity extends AppCompatActivity {
     private String userId;
     private LocationManager locationManager;
     private static final float DISTANCE_SCALING_FACTOR = 400.0f;
+    private static final long REMINDER_COOLDOWN_MS = 3000;
     private long lastVibrationTime = 0;
+    private long lastSpeechTime = 0;
+    private TextToSpeech textToSpeech;
 
 
 
@@ -121,6 +125,15 @@ public class MainActivity extends AppCompatActivity {
             finish();
             return;
         }
+
+        textToSpeech = new TextToSpeech(this, status -> {
+            if (status == TextToSpeech.SUCCESS) {
+                textToSpeech.setLanguage(java.util.Locale.TAIWAN); // 使用中文語音
+            } else {
+                Toast.makeText(this, "語音初始化失敗", Toast.LENGTH_SHORT).show();
+            }
+        });
+
         findViewById(R.id.btnSettings).setOnClickListener(v -> showSettingsDialog());
     }
 
@@ -375,16 +388,19 @@ public class MainActivity extends AppCompatActivity {
             case 3: // 高靈敏度：只要行人接近即可提醒
                 if (personDistance <= 20f) {
                     triggerVibrationOnce("高靈敏度：行人接近");
+                    speakOnce("前方有行人，請注意");
                 }
                 break;
             case 2: // 中靈敏度：行人 + 斑馬線
                 if (hasCrosswalk && personDistance <= 15f) {
                     triggerVibrationOnce("中靈敏度：行人+斑馬線");
+                    speakOnce("行人準備過馬路，請減速");
                 }
                 break;
             case 1: // 低靈敏度：行人 + 斑馬線 + 綠燈
                 if (hasCrosswalk && personDistance <= 10f && "green".equals(trafficLightColor)) {
                     triggerVibrationOnce("低靈敏度：綠燈+行人+斑馬線");
+                    speakOnce("綠燈期間有行人過馬路，請讓行");
                 }
                 break;
         }
@@ -402,7 +418,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void triggerVibrationOnce(String tag) {
         long now = System.currentTimeMillis();
-        if (now - lastVibrationTime < 3000) return;           
+        if (now - lastVibrationTime < REMINDER_COOLDOWN_MS) return;
 
         if (isVibrationEnabled) {
             Vibrator vibrator = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
@@ -412,14 +428,23 @@ public class MainActivity extends AppCompatActivity {
                 vibrator.vibrate(500);
             }
             lastVibrationTime = now;
-            Log.d("提醒", "\uD83D\uDEA8 觸發提醒: " + tag);
+            Log.d("提醒", "觸發提醒: " + tag);
         }
     }
 
-    private boolean isGreenLight() {
-        // TODO
-        return false;
+    private void speakOnce(String message) {
+        if (!isVoiceEnabled) return;
+
+        long now = System.currentTimeMillis();
+        if (now - lastSpeechTime < REMINDER_COOLDOWN_MS) return;
+
+        if (textToSpeech != null && !textToSpeech.isSpeaking()) {
+            textToSpeech.speak(message, TextToSpeech.QUEUE_FLUSH, null, "tts1");
+            lastSpeechTime = now; // 更新語音冷卻時間
+            Log.d("提醒", "播放語音：" + message);
+        }
     }
+
 
     private String detectTrafficLightColor(Bitmap bitmap, DetectorMain.Recognition recognition) {
         RectF rect = recognition.getLocation();
@@ -453,6 +478,14 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    @Override
+    protected void onDestroy() {
+        if (textToSpeech != null) {
+            textToSpeech.stop();
+            textToSpeech.shutdown();
+        }
+        super.onDestroy();
+    }
 
 
 }
