@@ -125,6 +125,15 @@ public class DetectorMain {
         private final float confidence;
         private RectF location;
 
+        private String color = "unknown";  // 新增欄位：燈號顏色
+
+        public String getColor() {
+            return color;
+        }
+
+        public void setColor(String color) {
+            this.color = color;
+        }
         public Recognition(String id, String title, float confidence, RectF location) {
             this.id = id;
             this.title = title;

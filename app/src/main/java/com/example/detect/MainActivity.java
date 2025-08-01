@@ -368,6 +368,7 @@ public class MainActivity extends AppCompatActivity {
         float trafficDistance = estimateTrafficLightDistance(recognitions);
         String trafficLightColor = "unknown";
 
+
         for (DetectorMain.Recognition r : recognitions) {
             if ("person".equals(r.getTitle())) {
                 hasPerson = true;
@@ -381,6 +382,7 @@ public class MainActivity extends AppCompatActivity {
             }
             if ("traffic_light".equals(r.getTitle())) {
                 trafficLightColor = detectTrafficLightColor(currentBitmap, r);
+                r.setColor(trafficLightColor);
             }
         }
 
