@@ -503,54 +503,43 @@ public class MainActivity extends AppCompatActivity {
         RectF box = lightBox.getLocation();
         int x = Math.max(0, (int) box.left);
         int y = Math.max(0, (int) box.top);
-        int width = Math.min(fullBitmap.getWidth() - x, (int) (box.right - box.left));
-        int height = Math.min(fullBitmap.getHeight() - y, (int) (box.bottom - box.top));
+        int w = Math.min(fullBitmap.getWidth() - x, (int)(box.right - box.left));
+        int h = Math.min(fullBitmap.getHeight() - y, (int)(box.bottom - box.top));
+        if (w < 10 || h < 10) return "unknown";
 
-        if (width < 10 || height < 10) return "unknown";
+        // 只取中段 1/3
+        int subY = y + h / 3;
+        int subH = h / 3;
+        Bitmap cropped = Bitmap.createBitmap(fullBitmap, x, subY, w, subH);
 
-        try {
-            Bitmap cropped = Bitmap.createBitmap(fullBitmap, x, y, width, height);
-            Mat mat = new Mat();
-            Utils.bitmapToMat(cropped, mat);
-            Imgproc.cvtColor(mat, mat, Imgproc.COLOR_RGB2HSV);
+        Mat mat = new Mat();
+        Utils.bitmapToMat(cropped, mat);
+        // 先去掉 Alpha
+        Imgproc.cvtColor(mat, mat, Imgproc.COLOR_RGBA2RGB);
+        // 再转 HSV
+        Imgproc.cvtColor(mat, mat, Imgproc.COLOR_RGB2HSV);
 
-            // 使用已定義的範圍
-            Mat red1 = new Mat(), red2 = new Mat(), redMask = new Mat();
-            Core.inRange(mat, LOWER_RED1, UPPER_RED1, red1);
-            Core.inRange(mat, LOWER_RED2, UPPER_RED2, red2);
-            Core.add(red1, red2, redMask);
+        Mat red1 = new Mat(), red2 = new Mat(), redMask = new Mat();
+        Core.inRange(mat, LOWER_RED1, UPPER_RED1, red1);
+        Core.inRange(mat, LOWER_RED2, UPPER_RED2, red2);
+        Core.add(red1, red2, redMask);
 
-            Mat yellowMask = new Mat();
-            Core.inRange(mat, LOWER_YELLOW, UPPER_YELLOW, yellowMask);
+        Mat yellowMask = new Mat(), greenMask = new Mat();
+        Core.inRange(mat, LOWER_YELLOW, UPPER_YELLOW, yellowMask);
+        Core.inRange(mat, LOWER_GREEN,  UPPER_GREEN,  greenMask);
 
-            Mat greenMask = new Mat();
-            Core.inRange(mat, LOWER_GREEN, UPPER_GREEN, greenMask);
+        double redCount    = Core.countNonZero(redMask);
+        double yellowCount = Core.countNonZero(yellowMask);
+        double greenCount  = Core.countNonZero(greenMask);
 
-            // 計算各遮罩的 Y 軸亮點最大投影值
-            int redMax = getMaxVerticalProjection(redMask);
-            int yellowMax = getMaxVerticalProjection(yellowMask);
-            int greenMax = getMaxVerticalProjection(greenMask);
-
-            int threshold = 10;  // 雜訊過濾
-            if (redMax > yellowMax && redMax > greenMax && redMax > threshold) return "red";
-            if (yellowMax > redMax && yellowMax > greenMax && yellowMax > threshold) return "yellow";
-            if (greenMax > redMax && greenMax > yellowMax && greenMax > threshold) return "green";
-
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-
+        final double MIN_COUNT = 100;
+        if (redCount    > yellowCount && redCount    > greenCount && redCount    > MIN_COUNT) return "red";
+        if (yellowCount > redCount    && yellowCount > greenCount && yellowCount > MIN_COUNT) return "yellow";
+        if (greenCount  > redCount    && greenCount  > yellowCount&& greenCount  > MIN_COUNT) return "green";
         return "unknown";
     }
 
-    @Override
-    protected void onDestroy() {
-        if (textToSpeech != null) {
-            textToSpeech.stop();
-            textToSpeech.shutdown();
-        }
-        super.onDestroy();
-    }
+
 
     private int getMaxVerticalProjection(Mat binaryMask) {
         int rows = binaryMask.rows();
@@ -571,6 +560,13 @@ public class MainActivity extends AppCompatActivity {
         return max;
     }
 
-
+    @Override
+    protected void onDestroy() {
+        if (textToSpeech != null) {
+            textToSpeech.stop();
+            textToSpeech.shutdown();
+        }
+        super.onDestroy();
+    }
 
 }
