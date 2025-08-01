@@ -35,6 +35,8 @@ import androidx.camera.core.Preview;
 import androidx.camera.lifecycle.ProcessCameraProvider;
 import androidx.camera.view.PreviewView;
 import androidx.core.app.ActivityCompat;
+import androidx.core.app.NotificationCompat;
+import androidx.core.app.NotificationManagerCompat;
 import androidx.core.content.ContextCompat;
 
 import com.example.detect.model.ReminderRequest;
@@ -66,6 +68,9 @@ import org.opencv.imgproc.Imgproc;
 import java.io.ByteArrayOutputStream;
 
 import android.speech.tts.TextToSpeech;
+
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
 
 public class MainActivity extends AppCompatActivity {
     private PreviewView previewView;
@@ -127,8 +132,11 @@ public class MainActivity extends AppCompatActivity {
             startLocationUpdates();
         } else {
             ActivityCompat.requestPermissions(this,
-                    new String[]{Manifest.permission.CAMERA, Manifest.permission.ACCESS_FINE_LOCATION}, PERMISSION_CODE);
-        }
+                    new String[]{
+                            Manifest.permission.CAMERA,
+                            Manifest.permission.ACCESS_FINE_LOCATION,
+                            Manifest.permission.POST_NOTIFICATIONS
+                    }, PERMISSION_CODE);}
 
         try {
             detector = new DetectorMain(getAssets(), "best_float16.tflite", "All");
@@ -151,7 +159,40 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
+        createNotificationChannel();
         findViewById(R.id.btnSettings).setOnClickListener(v -> showSettingsDialog());
+    }
+
+    private void createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = new NotificationChannel(
+                    "alert_channel",                     // Channel ID
+                    "行人/紅綠燈提醒",                     // 名稱
+                    NotificationManager.IMPORTANCE_HIGH  // 優先權
+            );
+            channel.setDescription("用於警示行人、紅綠燈等事件");
+
+            NotificationManager notificationManager = getSystemService(NotificationManager.class);
+            notificationManager.createNotificationChannel(channel);
+        }
+    }
+    private void sendAlertNotification(String title, String content) {
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, "alert_channel")
+                .setSmallIcon(R.drawable.ic_launcher_foreground) // 替換成你自己的 icon
+                .setContentTitle(title)
+                .setContentText(content)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setAutoCancel(true);
+
+        NotificationManagerCompat notificationManager = NotificationManagerCompat.from(this);
+
+        // 檢查權限
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                == PackageManager.PERMISSION_GRANTED) {
+            notificationManager.notify((int) System.currentTimeMillis(), builder.build());
+        } else {
+            Log.w("通知權限", "尚未取得通知權限，無法顯示通知");
+        }
     }
 
     private void startCamera() {
@@ -222,13 +263,6 @@ public class MainActivity extends AppCompatActivity {
         return BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.length);
     }
 
-
-    private List<DetectorMain.Recognition> runObjectDetection(Bitmap bitmap) {//
-        if (detector == null)  return new ArrayList<>();
-        List<DetectorMain.Recognition> results = new ArrayList<>();
-        results.addAll(detector.detect(bitmap, previewView.getWidth(), previewView.getHeight()));
-        return results;
-    }
 
     private void startLocationUpdates() {
         locationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
@@ -378,7 +412,6 @@ public class MainActivity extends AppCompatActivity {
         boolean hasPerson = false;
         boolean hasCrosswalk = false;
         float personDistance = -1f;
-        float trafficDistance = estimateTrafficLightDistance(recognitions);
         String trafficLightColor = "unknown";
 
 
@@ -406,18 +439,21 @@ public class MainActivity extends AppCompatActivity {
                 if (personDistance <= 20f) {
                     triggerVibrationOnce("高靈敏度：行人接近");
                     speakOnce("前方有行人，請注意");
+                    sendAlertNotification("行人靠近", "前方有行人，請小心慢行");
                 }
                 break;
             case 2: // 中靈敏度：行人 + 斑馬線
                 if (hasCrosswalk && personDistance <= 15f) {
                     triggerVibrationOnce("中靈敏度：行人+斑馬線");
                     speakOnce("行人準備過馬路，請減速");
+                    sendAlertNotification("行人靠近", "前方有行人，請小心慢行");
                 }
                 break;
             case 1: // 低靈敏度：行人 + 斑馬線 + 綠燈
                 if (hasCrosswalk && personDistance <= 10f && "green".equals(trafficLightColor)) {
                     triggerVibrationOnce("低靈敏度：綠燈+行人+斑馬線");
                     speakOnce("綠燈期間有行人過馬路，請讓行");
+                    sendAlertNotification("行人靠近", "前方有行人，請小心慢行");
                 }
                 break;
         }

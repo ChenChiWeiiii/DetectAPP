@@ -16,6 +16,8 @@
     <!-- Android 9 以上需要指定 hardware -->
     <uses-feature android:name="android.hardware.camera.any" />
 
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
