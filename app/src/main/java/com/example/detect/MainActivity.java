@@ -465,45 +465,46 @@ public class MainActivity extends AppCompatActivity {
 
     private String detectTrafficLightColor(Bitmap fullBitmap, DetectorMain.Recognition lightBox) {
         RectF box = lightBox.getLocation();
-
         int x = Math.max(0, (int) box.left);
         int y = Math.max(0, (int) box.top);
         int width = Math.min(fullBitmap.getWidth() - x, (int) (box.right - box.left));
         int height = Math.min(fullBitmap.getHeight() - y, (int) (box.bottom - box.top));
 
-        if (width <= 0 || height <= 0) return "unknown";
+        if (width < 10 || height < 10) return "unknown";
 
-        Bitmap croppedBitmap = Bitmap.createBitmap(fullBitmap, x, y, width, height);
-        Bitmap resizedBitmap = Bitmap.createScaledBitmap(croppedBitmap, width / 2, height / 2, false);
+        try {
+            Bitmap cropped = Bitmap.createBitmap(fullBitmap, x, y, width, height);
+            Mat mat = new Mat();
+            Utils.bitmapToMat(cropped, mat);
+            Imgproc.cvtColor(mat, mat, Imgproc.COLOR_RGB2HSV);
 
-        Mat mat = new Mat();
-        Utils.bitmapToMat(resizedBitmap, mat);
-        Imgproc.cvtColor(mat, mat, Imgproc.COLOR_RGB2HSV);
+            // 使用已定義的範圍
+            Mat red1 = new Mat(), red2 = new Mat(), redMask = new Mat();
+            Core.inRange(mat, LOWER_RED1, UPPER_RED1, red1);
+            Core.inRange(mat, LOWER_RED2, UPPER_RED2, red2);
+            Core.add(red1, red2, redMask);
 
-        Scalar meanHSV = Core.mean(mat);
-        double hue = meanHSV.val[0];
+            Mat yellowMask = new Mat();
+            Core.inRange(mat, LOWER_YELLOW, UPPER_YELLOW, yellowMask);
 
-        if ((hue >= 0 && hue <= 10) || (hue >= 160 && hue <= 180)) return "red";
-        if (hue >= 15 && hue <= 35) return "yellow";
-        if (hue >= 40 && hue <= 90) return "green";
+            Mat greenMask = new Mat();
+            Core.inRange(mat, LOWER_GREEN, UPPER_GREEN, greenMask);
 
-        Mat redMask1 = new Mat(), redMask2 = new Mat(), yellowMask = new Mat(), greenMask = new Mat();
-        Core.inRange(mat, LOWER_RED1, UPPER_RED1, redMask1);
-        Core.inRange(mat, LOWER_RED2, UPPER_RED2, redMask2);
-        Core.inRange(mat, LOWER_YELLOW, UPPER_YELLOW, yellowMask);
-        Core.inRange(mat, LOWER_GREEN, UPPER_GREEN, greenMask);
+            // 計算各遮罩的 Y 軸亮點最大投影值
+            int redMax = getMaxVerticalProjection(redMask);
+            int yellowMax = getMaxVerticalProjection(yellowMask);
+            int greenMax = getMaxVerticalProjection(greenMask);
 
-        Mat redMask = new Mat();
-        Core.addWeighted(redMask1, 1.0, redMask2, 1.0, 0.0, redMask);
+            int threshold = 10;  // 雜訊過濾
+            if (redMax > yellowMax && redMax > greenMax && redMax > threshold) return "red";
+            if (yellowMax > redMax && yellowMax > greenMax && yellowMax > threshold) return "yellow";
+            if (greenMax > redMax && greenMax > yellowMax && greenMax > threshold) return "green";
 
-        int redCount = Core.countNonZero(redMask);
-        int yellowCount = Core.countNonZero(yellowMask);
-        int greenCount = Core.countNonZero(greenMask);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
 
-        if (redCount > yellowCount && redCount > greenCount) return "red";
-        else if (greenCount > redCount && greenCount > yellowCount) return "green";
-        else if (yellowCount > redCount && yellowCount > greenCount) return "yellow";
-        else return "unknown";
+        return "unknown";
     }
 
     @Override
@@ -514,6 +515,26 @@ public class MainActivity extends AppCompatActivity {
         }
         super.onDestroy();
     }
+
+    private int getMaxVerticalProjection(Mat binaryMask) {
+        int rows = binaryMask.rows();
+        int cols = binaryMask.cols();
+        int[] projection = new int[rows];
+
+        for (int y = 0; y < rows; y++) {
+            int count = 0;
+            for (int x = 0; x < cols; x++) {
+                double[] pixel = binaryMask.get(y, x);
+                if (pixel != null && pixel[0] > 0) count++;
+            }
+            projection[y] = count;
+        }
+
+        int max = 0;
+        for (int v : projection) max = Math.max(max, v);
+        return max;
+    }
+
 
 
 }
