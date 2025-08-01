@@ -362,9 +362,11 @@ public class MainActivity extends AppCompatActivity {
             if ("crosswalk".equals(r.getTitle())) {
                 hasCrosswalk = true;
             }
-//            if ("traffic_light".equals(r.getTitle())) {
-//                trafficLightColor = detectTrafficLightColor(currentBitmap, r);
-//            }
+
+            if ("traffic_light".equals(r.getTitle())) {
+                trafficLightColor = detectTrafficLightColor(currentBitmap, r);
+            }
+
         }
 
         if (!hasPerson || personDistance < 0) return;
@@ -418,6 +420,39 @@ public class MainActivity extends AppCompatActivity {
         // TODO
         return false;
     }
+
+    private String detectTrafficLightColor(Bitmap bitmap, DetectorMain.Recognition recognition) {
+        RectF rect = recognition.getLocation();
+        int centerX = (int) ((rect.left + rect.right) / 2);
+        int centerY = (int) ((rect.top + rect.bottom) / 2);
+        int radius = (int) (rect.height() / 6);
+
+        int greenPixels = 0, redPixels = 0;
+        int totalPixels = 0;
+
+        for (int y = centerY - radius; y < centerY + radius; y++) {
+            for (int x = centerX - radius; x < centerX + radius; x++) {
+                if (x < 0 || y < 0 || x >= bitmap.getWidth() || y >= bitmap.getHeight()) continue;
+                int pixel = bitmap.getPixel(x, y);
+                int r = (pixel >> 16) & 0xFF;
+                int g = (pixel >> 8) & 0xFF;
+                int b = (pixel) & 0xFF;
+
+                if (r > 150 && g < 100) redPixels++;
+                if (g > 150 && r < 100) greenPixels++;
+                totalPixels++;
+            }
+        }
+
+        if (greenPixels > redPixels && greenPixels > totalPixels * 0.1) {
+            return "green";
+        } else if (redPixels > greenPixels && redPixels > totalPixels * 0.1) {
+            return "red";
+        } else {
+            return "unknown";
+        }
+    }
+
 
 
 }
