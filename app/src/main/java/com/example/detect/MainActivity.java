@@ -554,58 +554,56 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private String detectTrafficLightColor(Bitmap fullBmp, DetectorMain.Recognition rec) {
-        // 1. 裁切 ROI
         RectF boxF = rec.getLocation();
-        int x = Math.max(0, (int)boxF.left);
-        int y = Math.max(0, (int)boxF.top);
-        int w = Math.min(fullBmp.getWidth() - x, (int)(boxF.right - boxF.left));
-        int h = Math.min(fullBmp.getHeight() - y, (int)(boxF.bottom - boxF.top));
+        int x = Math.max(0, (int) boxF.left);
+        int y = Math.max(0, (int) boxF.top);
+        int w = Math.min(fullBmp.getWidth() - x, (int) (boxF.right - boxF.left));
+        int h = Math.min(fullBmp.getHeight() - y, (int) (boxF.bottom - boxF.top));
         if (w < 20 || h < 20) return "unknown";
+
+        // 1. 缩小 ROI，丢掉外壳 (去除 20% 边缘)
+        int padX = w / 5;
+        int padY = h / 5;
+        x += padX;  y += padY;
+        w -= padX * 2;  h -= padY * 2;
+        if (w <= 0 || h <= 0) return "unknown";
+
         Bitmap crop = Bitmap.createBitmap(fullBmp, x, y, w, h);
 
-        // 2. 转成 OpenCV Mat 并到 HSV
-        Mat hsv = new Mat();
-        Utils.bitmapToMat(crop, hsv);
-        Imgproc.cvtColor(hsv, hsv, Imgproc.COLOR_RGBA2RGB);
-        Imgproc.cvtColor(hsv, hsv, Imgproc.COLOR_RGB2HSV);
+        // 2. 转成 Mat 并到 HSV
+        Mat mat = new Mat();
+        Utils.bitmapToMat(crop, mat);
+        Imgproc.cvtColor(mat, mat, Imgproc.COLOR_BGR2HSV);
 
-        // 3. 均衡 V 通道（提亮）
-        List<Mat> chs = new ArrayList<>();
-        Core.split(hsv, chs);
-        Imgproc.equalizeHist(chs.get(2), chs.get(2));
-        Core.merge(chs, hsv);
+        // 3. 生成三种颜色的掩膜
+        Mat maskRed1 = new Mat(), maskRed2 = new Mat(), maskRed = new Mat();
+        Core.inRange(mat, new Scalar(0,  80,  80), new Scalar(10, 255, 255), maskRed1);
+        Core.inRange(mat, new Scalar(160,80,  80), new Scalar(180,255,255), maskRed2);
+        Core.add(maskRed1, maskRed2, maskRed);
 
-        // 4. 用 V 通道直接作为灰度图做 Otsu 分割
-        Mat brightMask = chs.get(2).clone();  // V 通道
-        Imgproc.threshold(brightMask, brightMask, 0, 255,
-                Imgproc.THRESH_BINARY + Imgproc.THRESH_OTSU);
+        Mat maskYellow = new Mat();
+        Core.inRange(mat, new Scalar(15, 80,  80), new Scalar(35, 255, 255), maskYellow);
 
-        // 5. 找轮廓
-        List<MatOfPoint> contours = new ArrayList<>();
-        Imgproc.findContours(brightMask, contours, new Mat(),
-                Imgproc.RETR_EXTERNAL, Imgproc.CHAIN_APPROX_SIMPLE);
+        Mat maskGreen = new Mat();
+        Core.inRange(mat, new Scalar(35, 80,  80), new Scalar(85, 255, 255), maskGreen);
 
-        // 6. 面积&位置过滤 & 合并到 finalMask
-        Mat finalMask = Mat.zeros(brightMask.size(), CvType.CV_8UC1);
-        for (MatOfPoint ctr : contours) {
-            double area = Imgproc.contourArea(ctr);
-            if (area < 0.001 * w * h) continue;        // 面积太小
-            //Rect r = Imgproc.boundingRect(ctr);        // 这里用的是 org.opencv.core.Rect
-            //if (r.y > h * 0.6) continue;               // 发光区域大多在上方 60%
-            Imgproc.drawContours(finalMask, Arrays.asList(ctr), -1,
-                    new Scalar(255), Core.FILLED);
-        }
+        // 4. 统计非零像素（亮灯像素）占比
+        int total = w * h;
+        int redCount    = Core.countNonZero(maskRed);
+        int yellowCount = Core.countNonZero(maskYellow);
+        int greenCount  = Core.countNonZero(maskGreen);
 
-        // 7. 在 finalMask 区域里计算 HSV 平均色
-        Scalar meanHSV = Core.mean(hsv, finalMask);
-        double H = meanHSV.val[0], S = meanHSV.val[1], Vv = meanHSV.val[2];
+        double redRatio    = redCount    / (double) total;
+        double yellowRatio = yellowCount / (double) total;
+        double greenRatio  = greenCount  / (double) total;
 
-        // 8. 简单阈值判定
-        if ((H < 10 || H > 160) && S > 80 && Vv > 60)      return "red";
-        if (H > 15  && H < 35  && S > 80 && Vv > 60)      return "yellow";
-        if (H > 35  && H < 85  && S > 80 && Vv > 60)      return "green";
+        // 5. 判断
+        if (redRatio    > 0.05 && redRatio    > yellowRatio && redRatio    > greenRatio)  return "red";
+        if (yellowRatio > 0.05 && yellowRatio > redRatio    && yellowRatio > greenRatio)  return "yellow";
+        if (greenRatio  > 0.05 && greenRatio  > redRatio    && greenRatio  > yellowRatio) return "green";
         return "unknown";
     }
+
 
     private int getMaxVerticalProjection(Mat binaryMask) {
         int rows = binaryMask.rows();
