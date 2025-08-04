@@ -555,52 +555,67 @@ public class MainActivity extends AppCompatActivity {
 
     private String detectTrafficLightColor(Bitmap fullBmp, DetectorMain.Recognition rec) {
         RectF boxF = rec.getLocation();
-        int x = Math.max(0, (int) boxF.left);
-        int y = Math.max(0, (int) boxF.top);
-        int w = Math.min(fullBmp.getWidth() - x, (int) (boxF.right - boxF.left));
-        int h = Math.min(fullBmp.getHeight() - y, (int) (boxF.bottom - boxF.top));
-        if (w < 20 || h < 20) return "unknown";
+        // 原始 ROI
+        int x0 = Math.max(0, (int) boxF.left);
+        int y0 = Math.max(0, (int) boxF.top);
+        int w0 = Math.min(fullBmp.getWidth() - x0, (int) (boxF.right - boxF.left));
+        int h0 = Math.min(fullBmp.getHeight() - y0, (int) (boxF.bottom - boxF.top));
+        if (w0 < 20 || h0 < 20) return "unknown";
 
-        // 1. 缩小 ROI，丢掉外壳 (去除 20% 边缘)
-        int padX = w / 5;
-        int padY = h / 5;
-        x += padX;  y += padY;
-        w -= padX * 2;  h -= padY * 2;
+        // 内缩 20%，只留中间 60%
+        int padX = w0 / 5;
+        int padY = h0 / 5;
+        int x = x0 + padX;
+        int y = y0 + padY;
+        int w = w0 - padX * 2;
+        int h = h0 - padY * 2;
         if (w <= 0 || h <= 0) return "unknown";
 
+        // 裁切 Bitmap
         Bitmap crop = Bitmap.createBitmap(fullBmp, x, y, w, h);
 
-        // 2. 转成 Mat 并到 HSV
-        Mat mat = new Mat();
-        Utils.bitmapToMat(crop, mat);
-        Imgproc.cvtColor(mat, mat, Imgproc.COLOR_BGR2HSV);
+        // 转成 OpenCV Mat 并转 HSV
+        Mat hsv = new Mat();
+        Utils.bitmapToMat(crop, hsv);
+        Imgproc.cvtColor(hsv, hsv, Imgproc.COLOR_RGBA2RGB);
+        Imgproc.cvtColor(hsv, hsv, Imgproc.COLOR_RGB2HSV);
 
-        // 3. 生成三种颜色的掩膜
-        Mat maskRed1 = new Mat(), maskRed2 = new Mat(), maskRed = new Mat();
-        Core.inRange(mat, new Scalar(0,  80,  80), new Scalar(10, 255, 255), maskRed1);
-        Core.inRange(mat, new Scalar(160,80,  80), new Scalar(180,255,255), maskRed2);
-        Core.add(maskRed1, maskRed2, maskRed);
+        // 中值滤波去噪
+        Imgproc.medianBlur(hsv, hsv, 5);
 
-        Mat maskYellow = new Mat();
-        Core.inRange(mat, new Scalar(15, 80,  80), new Scalar(35, 255, 255), maskYellow);
+        // HSV 阈值（S/V 从 80 下调到 60）
+        Scalar lr1 = new Scalar(0,  60,  60),  ur1 = new Scalar(10, 255, 255);
+        Scalar lr2 = new Scalar(160,60,  60),  ur2 = new Scalar(180,255,255);
+        Scalar ly  = new Scalar(15, 60,  60),  uy  = new Scalar(35, 255, 255);
+        Scalar lg  = new Scalar(35, 60,  60),  ug  = new Scalar(85, 255, 255);
 
-        Mat maskGreen = new Mat();
-        Core.inRange(mat, new Scalar(35, 80,  80), new Scalar(85, 255, 255), maskGreen);
+        // 生成掩膜
+        Mat maskR1 = new Mat(), maskR2 = new Mat(), maskRed = new Mat();
+        Core.inRange(hsv, lr1, ur1, maskR1);
+        Core.inRange(hsv, lr2, ur2, maskR2);
+        Core.add(maskR1, maskR2, maskRed);
 
-        // 4. 统计非零像素（亮灯像素）占比
+        Mat maskY = new Mat(), maskG = new Mat();
+        Core.inRange(hsv, ly, uy, maskY);
+        Core.inRange(hsv, lg, ug, maskG);
+
+        // 形态学开运算清理噪点
+        Mat kernel = Imgproc.getStructuringElement(Imgproc.MORPH_ELLIPSE, new Size(5,5));
+        Imgproc.morphologyEx(maskRed, maskRed, Imgproc.MORPH_OPEN, kernel);
+        Imgproc.morphologyEx(maskY,   maskY,   Imgproc.MORPH_OPEN, kernel);
+        Imgproc.morphologyEx(maskG,   maskG,   Imgproc.MORPH_OPEN, kernel);
+
+        // 计算占比
         int total = w * h;
-        int redCount    = Core.countNonZero(maskRed);
-        int yellowCount = Core.countNonZero(maskYellow);
-        int greenCount  = Core.countNonZero(maskGreen);
+        double rRatio = Core.countNonZero(maskRed)    / (double) total;
+        double yRatio = Core.countNonZero(maskY)      / (double) total;
+        double gRatio = Core.countNonZero(maskG)      / (double) total;
 
-        double redRatio    = redCount    / (double) total;
-        double yellowRatio = yellowCount / (double) total;
-        double greenRatio  = greenCount  / (double) total;
-
-        // 5. 判断
-        if (redRatio    > 0.05 && redRatio    > yellowRatio && redRatio    > greenRatio)  return "red";
-        if (yellowRatio > 0.05 && yellowRatio > redRatio    && yellowRatio > greenRatio)  return "yellow";
-        if (greenRatio  > 0.05 && greenRatio  > redRatio    && greenRatio  > yellowRatio) return "green";
+        // 阈值 3%
+        double TH = 0.03;
+        if (rRatio > TH && rRatio > yRatio && rRatio > gRatio)   return "red";
+        if (yRatio > TH && yRatio > rRatio && yRatio > gRatio)   return "yellow";
+        if (gRatio > TH && gRatio > rRatio && gRatio > yRatio)   return "green";
         return "unknown";
     }
 
