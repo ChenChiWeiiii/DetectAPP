@@ -501,23 +501,18 @@ public class MainActivity extends AppCompatActivity {
 
     private String detectTrafficLightColor(Bitmap fullBitmap, DetectorMain.Recognition lightBox) {
         RectF box = lightBox.getLocation();
-        int x = Math.max(0, (int) box.left);
-        int y = Math.max(0, (int) box.top);
-        int w = Math.min(fullBitmap.getWidth() - x, (int)(box.right - box.left));
-        int h = Math.min(fullBitmap.getHeight() - y, (int)(box.bottom - box.top));
+        int x = Math.max(0, (int)box.left);
+        int y = Math.max(0, (int)box.top);
+        int w = Math.min(fullBitmap.getWidth()-x, (int)(box.right-box.left));
+        int h = Math.min(fullBitmap.getHeight()-y, (int)(box.bottom-box.top));
         if (w < 10 || h < 10) return "unknown";
 
-        // 只取中段 1/3
-        int subY = y + h / 3;
-        int subH = h / 3;
-        Bitmap cropped = Bitmap.createBitmap(fullBitmap, x, subY, w, subH);
-
+        Bitmap cropped = Bitmap.createBitmap(fullBitmap, x, y, w, h);
         Mat mat = new Mat();
         Utils.bitmapToMat(cropped, mat);
-        // 先去掉 Alpha
-        Imgproc.cvtColor(mat, mat, Imgproc.COLOR_RGBA2RGB);
-        // 再转 HSV
-        Imgproc.cvtColor(mat, mat, Imgproc.COLOR_RGB2HSV);
+
+        Imgproc.cvtColor(mat, mat, Imgproc.COLOR_BGRA2BGR);
+        Imgproc.cvtColor(mat, mat, Imgproc.COLOR_BGR2HSV);
 
         Mat red1 = new Mat(), red2 = new Mat(), redMask = new Mat();
         Core.inRange(mat, LOWER_RED1, UPPER_RED1, red1);
@@ -528,16 +523,21 @@ public class MainActivity extends AppCompatActivity {
         Core.inRange(mat, LOWER_YELLOW, UPPER_YELLOW, yellowMask);
         Core.inRange(mat, LOWER_GREEN,  UPPER_GREEN,  greenMask);
 
-        double redCount    = Core.countNonZero(redMask);
-        double yellowCount = Core.countNonZero(yellowMask);
-        double greenCount  = Core.countNonZero(greenMask);
+        double rc = Core.countNonZero(redMask);
+        double yc = Core.countNonZero(yellowMask);
+        double gc = Core.countNonZero(greenMask);
+        int total = mat.rows() * mat.cols();
 
-        final double MIN_COUNT = 100;
-        if (redCount    > yellowCount && redCount    > greenCount && redCount    > MIN_COUNT) return "red";
-        if (yellowCount > redCount    && yellowCount > greenCount && yellowCount > MIN_COUNT) return "yellow";
-        if (greenCount  > redCount    && greenCount  > yellowCount&& greenCount  > MIN_COUNT) return "green";
+        Log.d("TLColor", String.format("R=%.0f Y=%.0f G=%.0f tot=%d", rc, yc, gc, total));
+
+        double rRatio = rc / total, yRatio = yc / total, gRatio = gc / total;
+        double TH = 0.05;  // 占比阈值 5%
+        if (rRatio > TH && rRatio > yRatio && rRatio > gRatio) return "red";
+        if (yRatio > TH && yRatio > rRatio && yRatio > gRatio) return "yellow";
+        if (gRatio > TH && gRatio > rRatio && gRatio > yRatio) return "green";
         return "unknown";
     }
+
 
 
 
