@@ -77,6 +77,8 @@ import android.speech.tts.TextToSpeech;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import org.opencv.android.OpenCVLoader;
+import org.opencv.core.Size;
+
 
 public class MainActivity extends AppCompatActivity {
     private PreviewView previewView;
