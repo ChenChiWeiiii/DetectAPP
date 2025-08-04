@@ -7,6 +7,7 @@ import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Matrix;
 import android.graphics.RectF;
 import android.location.Location;
 import android.location.LocationListener;
@@ -100,6 +101,7 @@ public class MainActivity extends AppCompatActivity {
     private static final Scalar UPPER_YELLOW = new Scalar(35, 255, 255);
     private static final Scalar LOWER_GREEN = new Scalar(40, 50, 50);
     private static final Scalar UPPER_GREEN = new Scalar(90, 255, 255);
+
 
 
 
@@ -201,6 +203,8 @@ public class MainActivity extends AppCompatActivity {
             try {
                 ProcessCameraProvider cameraProvider = cameraProviderFuture.get();
                 Preview preview = new Preview.Builder().build();
+                previewView.setImplementationMode(PreviewView.ImplementationMode.COMPATIBLE);
+                previewView.setScaleType(PreviewView.ScaleType.FIT_CENTER);
                 preview.setTargetRotation(previewView.getDisplay().getRotation());
                 preview.setSurfaceProvider(previewView.getSurfaceProvider());
 
@@ -263,6 +267,10 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private Bitmap imageToBitmap(ImageProxy image) {
+        // 1. 先拿到旋轉角度
+        int rotation = image.getImageInfo().getRotationDegrees();
+
+        // 2. NV21 -> JPEG -> 原始 Bitmap（raw）
         ImageProxy.PlaneProxy[] planes = image.getPlanes();
         ByteBuffer yBuffer = planes[0].getBuffer();
         ByteBuffer uBuffer = planes[1].getBuffer();
@@ -271,25 +279,28 @@ public class MainActivity extends AppCompatActivity {
         int ySize = yBuffer.remaining();
         int uSize = uBuffer.remaining();
         int vSize = vBuffer.remaining();
-
         byte[] nv21 = new byte[ySize + uSize + vSize];
-
         yBuffer.get(nv21, 0, ySize);
         vBuffer.get(nv21, ySize, vSize);
         uBuffer.get(nv21, ySize + vSize, uSize);
 
-        YuvImage yuvImage = new YuvImage(
-                nv21,
-                ImageFormat.NV21,
-                image.getWidth(),
-                image.getHeight(),
-                null
-        );
+        YuvImage yuv = new YuvImage(nv21, ImageFormat.NV21,
+                image.getWidth(), image.getHeight(), null);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
-        yuvImage.compressToJpeg(new Rect(0, 0, image.getWidth(), image.getHeight()), 100, out);
-        byte[] imageBytes = out.toByteArray();
-        return BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.length);
+        yuv.compressToJpeg(new Rect(0, 0, image.getWidth(), image.getHeight()), 100, out);
+        byte[] jpeg = out.toByteArray();
+        Bitmap raw = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length);
+
+        // 3. 用 Matrix 把 raw 旋轉到正確方向
+        Matrix m = new Matrix();
+        m.postRotate(rotation);
+        Bitmap rotated = Bitmap.createBitmap(
+                raw, 0, 0, raw.getWidth(), raw.getHeight(), m, true);
+
+        // 4. 回傳糾正後的 Bitmap
+        return rotated;
     }
+
 
 
     private void startLocationUpdates() {
