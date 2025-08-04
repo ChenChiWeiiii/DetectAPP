@@ -46,6 +46,7 @@ import com.google.common.util.concurrent.ListenableFuture;
 
 import java.nio.ByteBuffer;
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.concurrent.ExecutionException;
@@ -57,12 +58,15 @@ import retrofit2.Callback;
 import retrofit2.Response;
 
 import android.graphics.ImageFormat;
-import android.graphics.Rect;
+
 import android.graphics.YuvImage;
 
+import org.opencv.core.Rect;
 import org.opencv.android.Utils;
 import org.opencv.core.Core;
+import org.opencv.core.CvType;
 import org.opencv.core.Mat;
+import org.opencv.core.MatOfPoint;
 import org.opencv.core.Scalar;
 import org.opencv.imgproc.Imgproc;
 
@@ -287,7 +291,12 @@ public class MainActivity extends AppCompatActivity {
         YuvImage yuv = new YuvImage(nv21, ImageFormat.NV21,
                 image.getWidth(), image.getHeight(), null);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
-        yuv.compressToJpeg(new Rect(0, 0, image.getWidth(), image.getHeight()), 100, out);
+        yuv.compressToJpeg(
+                new android.graphics.Rect(0, 0, image.getWidth(), image.getHeight()),
+                100,
+                out
+        );
+
         byte[] jpeg = out.toByteArray();
         Bitmap raw = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length);
 
@@ -537,48 +546,59 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    private String detectTrafficLightColor(Bitmap fullBmp, DetectorMain.Recognition rec) {
+        // 1. 裁切 ROI
+        RectF boxF = rec.getLocation();
+        int x = Math.max(0, (int)boxF.left);
+        int y = Math.max(0, (int)boxF.top);
+        int w = Math.min(fullBmp.getWidth() - x, (int)(boxF.right - boxF.left));
+        int h = Math.min(fullBmp.getHeight() - y, (int)(boxF.bottom - boxF.top));
+        if (w < 20 || h < 20) return "unknown";
+        Bitmap crop = Bitmap.createBitmap(fullBmp, x, y, w, h);
 
-    private String detectTrafficLightColor(Bitmap fullBitmap, DetectorMain.Recognition lightBox) {
-        RectF box = lightBox.getLocation();
-        int x = Math.max(0, (int)box.left);
-        int y = Math.max(0, (int)box.top);
-        int w = Math.min(fullBitmap.getWidth()-x, (int)(box.right-box.left));
-        int h = Math.min(fullBitmap.getHeight()-y, (int)(box.bottom-box.top));
-        if (w < 10 || h < 10) return "unknown";
+        // 2. 转成 OpenCV Mat 并到 HSV
+        Mat hsv = new Mat();
+        Utils.bitmapToMat(crop, hsv);
+        Imgproc.cvtColor(hsv, hsv, Imgproc.COLOR_RGBA2RGB);
+        Imgproc.cvtColor(hsv, hsv, Imgproc.COLOR_RGB2HSV);
 
-        Bitmap cropped = Bitmap.createBitmap(fullBitmap, x, y, w, h);
-        Mat mat = new Mat();
-        Utils.bitmapToMat(cropped, mat);
+        // 3. 均衡 V 通道（提亮）
+        List<Mat> chs = new ArrayList<>();
+        Core.split(hsv, chs);
+        Imgproc.equalizeHist(chs.get(2), chs.get(2));
+        Core.merge(chs, hsv);
 
-        Imgproc.cvtColor(mat, mat, Imgproc.COLOR_BGRA2BGR);
-        Imgproc.cvtColor(mat, mat, Imgproc.COLOR_BGR2HSV);
+        // 4. 用 V 通道直接作为灰度图做 Otsu 分割
+        Mat brightMask = chs.get(2).clone();  // V 通道
+        Imgproc.threshold(brightMask, brightMask, 0, 255,
+                Imgproc.THRESH_BINARY + Imgproc.THRESH_OTSU);
 
-        Mat red1 = new Mat(), red2 = new Mat(), redMask = new Mat();
-        Core.inRange(mat, LOWER_RED1, UPPER_RED1, red1);
-        Core.inRange(mat, LOWER_RED2, UPPER_RED2, red2);
-        Core.add(red1, red2, redMask);
+        // 5. 找轮廓
+        List<MatOfPoint> contours = new ArrayList<>();
+        Imgproc.findContours(brightMask, contours, new Mat(),
+                Imgproc.RETR_EXTERNAL, Imgproc.CHAIN_APPROX_SIMPLE);
 
-        Mat yellowMask = new Mat(), greenMask = new Mat();
-        Core.inRange(mat, LOWER_YELLOW, UPPER_YELLOW, yellowMask);
-        Core.inRange(mat, LOWER_GREEN,  UPPER_GREEN,  greenMask);
+        // 6. 面积&位置过滤 & 合并到 finalMask
+        Mat finalMask = Mat.zeros(brightMask.size(), CvType.CV_8UC1);
+        for (MatOfPoint ctr : contours) {
+            double area = Imgproc.contourArea(ctr);
+            if (area < 0.001 * w * h) continue;        // 面积太小
+            Rect r = Imgproc.boundingRect(ctr);        // 这里用的是 org.opencv.core.Rect
+            if (r.y > h * 0.6) continue;               // 发光区域大多在上方 60%
+            Imgproc.drawContours(finalMask, Arrays.asList(ctr), -1,
+                    new Scalar(255), Core.FILLED);
+        }
 
-        double rc = Core.countNonZero(redMask);
-        double yc = Core.countNonZero(yellowMask);
-        double gc = Core.countNonZero(greenMask);
-        int total = mat.rows() * mat.cols();
+        // 7. 在 finalMask 区域里计算 HSV 平均色
+        Scalar meanHSV = Core.mean(hsv, finalMask);
+        double H = meanHSV.val[0], S = meanHSV.val[1], Vv = meanHSV.val[2];
 
-        Log.d("TLColor", String.format("R=%.0f Y=%.0f G=%.0f tot=%d", rc, yc, gc, total));
-
-        double rRatio = rc / total, yRatio = yc / total, gRatio = gc / total;
-        double TH = 0.05;  // 占比阈值 5%
-        if (rRatio > TH && rRatio > yRatio && rRatio > gRatio) return "red";
-        if (yRatio > TH && yRatio > rRatio && yRatio > gRatio) return "yellow";
-        if (gRatio > TH && gRatio > rRatio && gRatio > yRatio) return "green";
+        // 8. 简单阈值判定
+        if ((H < 10 || H > 160) && S > 80 && Vv > 80)      return "red";
+        if (H > 15  && H < 35  && S > 80 && Vv > 80)      return "yellow";
+        if (H > 35  && H < 85  && S > 80 && Vv > 80)      return "green";
         return "unknown";
     }
-
-
-
 
     private int getMaxVerticalProjection(Mat binaryMask) {
         int rows = binaryMask.rows();

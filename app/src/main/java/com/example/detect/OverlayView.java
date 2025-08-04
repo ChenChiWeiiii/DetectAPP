@@ -16,6 +16,8 @@ public class OverlayView extends View {
     private List<DetectorMain.Recognition> results = new ArrayList<>();
     private Paint boxPaint;
     private Paint textPaint;
+    // 紀錄預設文字顏色
+    private final int defaultTextColor = Color.YELLOW;
 
     public OverlayView(Context context, AttributeSet attrs) {
         super(context, attrs);
@@ -29,7 +31,7 @@ public class OverlayView extends View {
         boxPaint.setStrokeWidth(6.0f);
 
         textPaint = new Paint();
-        textPaint.setColor(Color.YELLOW);
+        textPaint.setColor(defaultTextColor);
         textPaint.setTextSize(50f);
     }
 
@@ -42,29 +44,47 @@ public class OverlayView extends View {
     @Override
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
+
         for (DetectorMain.Recognition result : results) {
             RectF box = result.getLocation();
             canvas.drawRect(box, boxPaint);
 
-            // 顯示標籤 + 信心度
-            canvas.drawText(result.getTitle() + " (" + String.format("%.2f", result.getConfidence()) + ")",
-                    box.left, box.top - 10, textPaint);
+            // 1) 畫標籤 + 信心度（保持預設文字顏色）
+            textPaint.setColor(defaultTextColor);
+            canvas.drawText(
+                    result.getTitle() + " (" + String.format("%.2f", result.getConfidence()) + ")",
+                    box.left,
+                    box.top - 10,
+                    textPaint
+            );
 
-            // 顯示燈號和距離
+            // 2) 如果是 traffic_light，就用動態文字顏色畫出燈號 + 距離
             if ("traffic_light".equals(result.getTitle())) {
                 float height = box.height();
                 if (height > 0) {
                     float estimatedDistance = 400.0f / height;
-                    String color = result.getColor();
-                    if (color == null || "unknown".equals(color)) {
-                        color = "?";
+                    String color = result.getColor();         // red / yellow / green / unknown
+                    // 根據 color 決定文字顏色
+                    int textColor;
+                    switch (color) {
+                        case "red":    textColor = Color.RED;    break;
+                        case "yellow": textColor = Color.YELLOW; break;
+                        case "green":  textColor = Color.GREEN;  break;
+                        default:       textColor = Color.WHITE;  break;
                     }
-                    canvas.drawText(String.format("%s  %.1f m", color, estimatedDistance),
-                            box.left, box.bottom + 40, textPaint);
+                    textPaint.setColor(textColor);
+
+                    // 最後畫出「紅綠燈顏色 + 距離」
+                    canvas.drawText(
+                            String.format("%s  %.1f m", color, estimatedDistance),
+                            box.left,
+                            box.bottom + 40,
+                            textPaint
+                    );
+                    // 畫完之後重置回預設顏色，以免影響下一個標籤
+                    textPaint.setColor(defaultTextColor);
                 }
             }
-
         }
     }
-
 }
