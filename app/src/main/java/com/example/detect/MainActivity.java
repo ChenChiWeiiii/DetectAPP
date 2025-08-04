@@ -76,6 +76,7 @@ import android.speech.tts.TextToSpeech;
 
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
+import org.opencv.android.OpenCVLoader;
 
 public class MainActivity extends AppCompatActivity {
     private PreviewView previewView;
@@ -113,6 +114,12 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        if (!OpenCVLoader.initDebug()) {
+            Log.e("OpenCV", "Unable to load OpenCV");
+        } else {
+            Log.d("OpenCV", "OpenCV loaded successfully");
+        }
 
         SharedPreferences loginPrefs = getSharedPreferences("user_prefs", MODE_PRIVATE);
         userId = loginPrefs.getString("user_id", null);
