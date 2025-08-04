@@ -201,6 +201,7 @@ public class MainActivity extends AppCompatActivity {
             try {
                 ProcessCameraProvider cameraProvider = cameraProviderFuture.get();
                 Preview preview = new Preview.Builder().build();
+                preview.setTargetRotation(previewView.getDisplay().getRotation());
                 preview.setSurfaceProvider(previewView.getSurfaceProvider());
 
                 CameraSelector cameraSelector = new CameraSelector.Builder()
@@ -211,20 +212,47 @@ public class MainActivity extends AppCompatActivity {
                         .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                         .build();
 
+                analysis.setTargetRotation(previewView.getDisplay().getRotation());
+
                 analysis.setAnalyzer(ContextCompat.getMainExecutor(this), image -> {
+                    // 1. 先把 ImageProxy 轉成 Bitmap
                     Bitmap bitmap = imageToBitmap(image);
                     currentBitmap = bitmap;
-                    List<DetectorMain.Recognition> resultsAll = detector.detect(bitmap, previewView.getWidth(), previewView.getHeight());
 
-                    List<DetectorMain.Recognition> allResults = new ArrayList<>();
-                    allResults.addAll(resultsAll);
+                    // 2. 模型回傳的 recognitions，假設它們的 RectF 是 bitmap 尺寸之座標
+                    List<DetectorMain.Recognition> rawResults =
+                            detector.detect(bitmap, bitmap.getWidth(), bitmap.getHeight());
 
-                    overlayView.setResults(allResults);
-                    overlayView.invalidate();             // 觸發 onDraw()
-                    Log.d("Detection", "辨識到的物件數量：" + allResults.size());
-                    processPedestrianLogic(allResults);
+                    // 3. 計算 PreviewView 上實際顯示影像的縮放、偏移
+                    float viewW = previewView.getWidth();
+                    float viewH = previewView.getHeight();
+                    float imgW  = bitmap.getWidth();
+                    float imgH  = bitmap.getHeight();
+                    // FIT_CENTER：維持長寬比，整張圖完整顯示
+                    float scale = Math.min(viewW / imgW, viewH / imgH);
+                    float dx = (viewW  - imgW * scale) / 2f;
+                    float dy = (viewH  - imgH * scale) / 2f;
+
+                    // 4. 把每個 box 轉成 View 座標
+                    List<DetectorMain.Recognition> viewResults = new ArrayList<>();
+                    for (DetectorMain.Recognition r : rawResults) {
+                        RectF b = r.getLocation();
+                        RectF vb = new RectF(
+                                b.left   * scale + dx,
+                                b.top    * scale + dy,
+                                b.right  * scale + dx,
+                                b.bottom * scale + dy
+                        );
+                        r.setLocation(vb);
+                        viewResults.add(r);
+                    }
+
+                    // 5. 丟到 OverlayView 畫
+                    overlayView.setResults(viewResults);
+                    processPedestrianLogic(viewResults);
                     image.close();
                 });
+
                 cameraProvider.unbindAll();
                 cameraProvider.bindToLifecycle(this, cameraSelector, preview, analysis);
 
