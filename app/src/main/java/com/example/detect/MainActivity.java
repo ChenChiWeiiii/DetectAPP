@@ -583,8 +583,8 @@ public class MainActivity extends AppCompatActivity {
         for (MatOfPoint ctr : contours) {
             double area = Imgproc.contourArea(ctr);
             if (area < 0.001 * w * h) continue;        // 面积太小
-            Rect r = Imgproc.boundingRect(ctr);        // 这里用的是 org.opencv.core.Rect
-            if (r.y > h * 0.6) continue;               // 发光区域大多在上方 60%
+            //Rect r = Imgproc.boundingRect(ctr);        // 这里用的是 org.opencv.core.Rect
+            //if (r.y > h * 0.6) continue;               // 发光区域大多在上方 60%
             Imgproc.drawContours(finalMask, Arrays.asList(ctr), -1,
                     new Scalar(255), Core.FILLED);
         }
@@ -594,9 +594,9 @@ public class MainActivity extends AppCompatActivity {
         double H = meanHSV.val[0], S = meanHSV.val[1], Vv = meanHSV.val[2];
 
         // 8. 简单阈值判定
-        if ((H < 10 || H > 160) && S > 80 && Vv > 80)      return "red";
-        if (H > 15  && H < 35  && S > 80 && Vv > 80)      return "yellow";
-        if (H > 35  && H < 85  && S > 80 && Vv > 80)      return "green";
+        if ((H < 10 || H > 160) && S > 80 && Vv > 60)      return "red";
+        if (H > 15  && H < 35  && S > 80 && Vv > 60)      return "yellow";
+        if (H > 35  && H < 85  && S > 80 && Vv > 60)      return "green";
         return "unknown";
     }
 
