@@ -1,6 +1,8 @@
 package com.example.detect;
 
 import android.Manifest;
+import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothDevice;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -58,6 +60,7 @@ import retrofit2.Response;
 import android.graphics.ImageFormat;
 import android.graphics.Rect;
 import android.graphics.YuvImage;
+import android.Manifest;
 
 import org.opencv.android.Utils;
 import org.opencv.core.Core;
@@ -71,6 +74,22 @@ import android.speech.tts.TextToSpeech;
 
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
+
+import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothDevice;
+import android.bluetooth.BluetoothGatt;
+import android.bluetooth.BluetoothGattCallback;
+import android.bluetooth.BluetoothGattCharacteristic;
+import android.bluetooth.BluetoothGattService;
+import android.bluetooth.BluetoothManager;
+import android.bluetooth.BluetoothProfile;
+import android.bluetooth.le.BluetoothLeScanner;
+import android.bluetooth.le.ScanCallback;
+import android.bluetooth.le.ScanResult;
+import java.util.UUID;
+
+
+
 
 public class MainActivity extends AppCompatActivity {
     private PreviewView previewView;
@@ -91,6 +110,14 @@ public class MainActivity extends AppCompatActivity {
     private long lastVibrationTime = 0;
     private long lastSpeechTime = 0;
     private TextToSpeech textToSpeech;
+
+    private BluetoothAdapter bluetoothAdapter;
+    private BluetoothLeScanner bluetoothLeScanner;
+    private BluetoothGatt bluetoothGatt;
+    private final String targetDeviceName = "Mi Smart Band"; // 可改成你實際的裝置名稱
+    private static final int REQUEST_BLUETOOTH_PERMISSIONS = 1001;
+
+
 
     private static final Scalar LOWER_RED1 = new Scalar(0, 70, 50);
     private static final Scalar UPPER_RED1 = new Scalar(10, 255, 255);
@@ -118,6 +145,7 @@ public class MainActivity extends AppCompatActivity {
         }
 
         setContentView(R.layout.activity_main);
+        createNotificationChannel();
         previewView = findViewById(R.id.previewView);
         overlayView = findViewById(R.id.overlay);
         tvSpeed = findViewById(R.id.tv_speed);
@@ -158,10 +186,128 @@ public class MainActivity extends AppCompatActivity {
                 Toast.makeText(this, "語音初始化失敗", Toast.LENGTH_SHORT).show();
             }
         });
+        //初始化藍牙並請求權限
+        BluetoothManager bluetoothManager = (BluetoothManager) getSystemService(Context.BLUETOOTH_SERVICE);
+        bluetoothAdapter = bluetoothManager.getAdapter();
+        requestBluetoothPermissions(); // 呼叫藍牙權限請
 
-        createNotificationChannel();
-        findViewById(R.id.btnSettings).setOnClickListener(v -> showSettingsDialog());
+
     }
+    //加入藍芽權限請求
+    private void requestBluetoothPermissions() {
+        Log.d("MiBand", "準備請求藍牙權限");
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            ActivityCompat.requestPermissions(this, new String[]{
+                    Manifest.permission.BLUETOOTH_CONNECT,
+                    Manifest.permission.BLUETOOTH_SCAN
+            }, REQUEST_BLUETOOTH_PERMISSIONS);
+        } else {
+            Log.d("MiBand", "Android 版本低於 12，跳過藍牙權限請求");
+            scanAndConnectMiBand();  // 如果低版本可以直接掃描
+        }
+    }
+    //掃描並連線手環
+    private void scanAndConnectMiBand() {
+        Log.d("MiBand", "執行 scanAndConnectMiBand()");
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
+            Log.w("MiBand", "缺少 BLUETOOTH_SCAN 權限");
+            return;
+        }
+
+        bluetoothLeScanner = bluetoothAdapter.getBluetoothLeScanner();
+        bluetoothLeScanner.startScan(new ScanCallback() {
+            @Override
+            public void onScanResult(int callbackType, ScanResult result) {
+                Log.d("MiBand", "掃描到裝置");
+                BluetoothDevice device = result.getDevice();
+                if (ActivityCompat.checkSelfPermission(MainActivity.this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                    Log.w("MiBand", "缺少 BLUETOOTH_CONNECT 權限，略過裝置");
+                    return;
+                }
+
+                if (device != null) {
+                    Log.d("MiBand", "找到手環：" + device.getName());
+                    bluetoothLeScanner.stopScan(this);
+                    connectToMiBand(device);
+                }
+            }
+        });
+    }
+    //連線與震動功能
+    private void connectToMiBand(BluetoothDevice device) {
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+            Log.w("MiBand", "缺少 BLUETOOTH_CONNECT 權限");
+            return;
+        }
+
+        bluetoothGatt = device.connectGatt(this, false, new BluetoothGattCallback() {
+            private final Context context = MainActivity.this;
+            @Override
+            public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
+                if (ActivityCompat.checkSelfPermission(MainActivity.this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
+                    Log.d("MiBand", "成功連線到手環");
+                    bluetoothGatt.discoverServices();
+                } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                    Log.d("MiBand", "手環已斷線");
+                }
+            }
+
+            @Override
+            public void onServicesDiscovered(BluetoothGatt gatt, int status) {
+                Log.d("MiBand", "開始嘗試使用私有UUID震動");
+
+                // 原本的 UUID 嘗試
+                UUID vibrationServiceUUID = UUID.fromString("7365a0ae-e596-129d-d84a-88db1ffbcc04");
+                UUID vibrationCharUUID = UUID.fromString("1c7cfacb-7818-c09c-9345-04602070e0cc");
+
+                BluetoothGattService service = gatt.getService(vibrationServiceUUID);
+                if (service != null) {
+                    BluetoothGattCharacteristic vibrationChar = service.getCharacteristic(vibrationCharUUID);
+                    if (vibrationChar != null &&
+                            ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
+                        vibrationChar.setValue(new byte[]{0x01});
+                        boolean success = gatt.writeCharacteristic(vibrationChar);
+                        Log.d("MiBand", "試圖震動小米手環：" + success);
+                    } else {
+                        Log.d("MiBand", "找不到震動特徵值");
+                    }
+                } else {
+                    Log.w("MiBand", "找不到震動服務");
+                }
+
+                // 🔽 額外呼叫你自訂的震動方法（可選）
+                triggerMiBandVibration();
+            }
+        });
+
+
+    }
+
+    private void triggerMiBandVibration() {
+        if (bluetoothGatt == null) {
+            Log.w("MiBand", "bluetoothGatt 為 null，無法震動");
+            return;
+        }
+
+        UUID vibrationServiceUUID = UUID.fromString("7365a0ae-e596-129d-d84a-88db1ffbcc04");
+        UUID vibrationCharUUID = UUID.fromString("1c7cfacb-7818-c09c-9345-04602070e0cc");
+
+        BluetoothGattService service = bluetoothGatt.getService(vibrationServiceUUID);
+        if (service != null) {
+            BluetoothGattCharacteristic vibrationChar = service.getCharacteristic(vibrationCharUUID);
+            if (vibrationChar != null&&ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
+                vibrationChar.setValue(new byte[]{0x01});
+                boolean success = bluetoothGatt.writeCharacteristic(vibrationChar);
+                Log.d("MiBand", "試圖震動小米手環：" + success);
+            } else {
+                Log.w("MiBand", "找不到震動特徵值");
+            }
+        } else {
+            Log.w("MiBand", "找不到震動服務");
+        }
+    }
+
 
     private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -406,6 +552,22 @@ public class MainActivity extends AppCompatActivity {
             startCamera();
             startLocationUpdates();
         }
+        if (requestCode == REQUEST_BLUETOOTH_PERMISSIONS) {
+            Log.d("MiBand", "收到藍牙權限結果");
+            boolean granted = true;
+            for (int result : grantResults) {
+                if (result != PackageManager.PERMISSION_GRANTED) {
+                    granted = false;
+                    break;
+                }
+            }
+            if (granted) {
+                Log.d("MiBand", "藍牙權限已授權，開始掃描");
+                scanAndConnectMiBand();
+            } else {
+                Toast.makeText(this, "未授權藍牙權限，無法連線手環", Toast.LENGTH_SHORT).show();
+            }
+        }
     }
 
     private void processPedestrianLogic(List<DetectorMain.Recognition> recognitions) {
@@ -449,8 +611,8 @@ public class MainActivity extends AppCompatActivity {
                     sendAlertNotification("行人靠近", "前方有行人，請小心慢行");
                 }
                 break;
-            case 1: // 低靈敏度：行人 + 斑馬線 + 綠燈
-                if (hasCrosswalk && personDistance <= 10f && "green".equals(trafficLightColor)) {
+            case 1: // 低靈敏度：行人 + 斑馬線 + 綠燈 && "green".equals(trafficLightColor)
+                if (hasCrosswalk && personDistance <= 10f) {
                     triggerVibrationOnce("低靈敏度：綠燈+行人+斑馬線");
                     speakOnce("綠燈期間有行人過馬路，請讓行");
                     sendAlertNotification("行人靠近", "前方有行人，請小心慢行");
@@ -480,6 +642,7 @@ public class MainActivity extends AppCompatActivity {
             } else {
                 vibrator.vibrate(500);
             }
+            triggerMiBandVibration();
             lastVibrationTime = now;
             Log.d("提醒", "觸發提醒: " + tag);
         }
@@ -538,8 +701,6 @@ public class MainActivity extends AppCompatActivity {
         if (greenCount  > redCount    && greenCount  > yellowCount&& greenCount  > MIN_COUNT) return "green";
         return "unknown";
     }
-
-
 
     private int getMaxVerticalProjection(Mat binaryMask) {
         int rows = binaryMask.rows();
