@@ -26,7 +26,7 @@ public class DetectorMain {
     private final Interpreter interpreter;
     private final List<String> labels;
 
-    private final String modelType; // "traffic" or "person"
+    private final String modelType;
     private Bitmap resizedBitmap;
 
     public DetectorMain(AssetManager assetManager, String modelName, String modelType) throws IOException {

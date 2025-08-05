@@ -9,6 +9,7 @@ import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Matrix;
 import android.graphics.RectF;
 import android.location.Location;
 import android.location.LocationListener;
@@ -47,6 +48,7 @@ import com.google.common.util.concurrent.ListenableFuture;
 
 import java.nio.ByteBuffer;
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.concurrent.ExecutionException;
@@ -58,13 +60,16 @@ import retrofit2.Callback;
 import retrofit2.Response;
 
 import android.graphics.ImageFormat;
-import android.graphics.Rect;
+
 import android.graphics.YuvImage;
 import android.Manifest;
 
+import org.opencv.core.Size;
 import org.opencv.android.Utils;
 import org.opencv.core.Core;
+import org.opencv.core.CvType;
 import org.opencv.core.Mat;
+import org.opencv.core.MatOfPoint;
 import org.opencv.core.Scalar;
 import org.opencv.imgproc.Imgproc;
 
@@ -74,6 +79,9 @@ import android.speech.tts.TextToSpeech;
 
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
+import org.opencv.android.OpenCVLoader;
+
+
 
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
@@ -131,9 +139,16 @@ public class MainActivity extends AppCompatActivity {
 
 
 
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        if (!OpenCVLoader.initDebug()) {
+            Log.e("OpenCV", "Unable to load OpenCV");
+        } else {
+            Log.d("OpenCV", "OpenCV loaded successfully");
+        }
 
         SharedPreferences loginPrefs = getSharedPreferences("user_prefs", MODE_PRIVATE);
         userId = loginPrefs.getString("user_id", null);
@@ -347,6 +362,9 @@ public class MainActivity extends AppCompatActivity {
             try {
                 ProcessCameraProvider cameraProvider = cameraProviderFuture.get();
                 Preview preview = new Preview.Builder().build();
+                previewView.setImplementationMode(PreviewView.ImplementationMode.COMPATIBLE);
+                previewView.setScaleType(PreviewView.ScaleType.FIT_CENTER);
+                preview.setTargetRotation(previewView.getDisplay().getRotation());
                 preview.setSurfaceProvider(previewView.getSurfaceProvider());
 
                 CameraSelector cameraSelector = new CameraSelector.Builder()
@@ -357,20 +375,94 @@ public class MainActivity extends AppCompatActivity {
                         .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                         .build();
 
+                analysis.setTargetRotation(previewView.getDisplay().getRotation());
+
+//                analysis.setAnalyzer(ContextCompat.getMainExecutor(this), image -> {
+//                    // 1. 先把 ImageProxy 轉成 Bitmap
+//                    Bitmap bitmap = imageToBitmap(image);
+//                    currentBitmap = bitmap;
+//
+//                    // 2. 模型回傳的 recognitions，假設它們的 RectF 是 bitmap 尺寸之座標
+//                    List<DetectorMain.Recognition> rawResults =
+//                            detector.detect(bitmap, bitmap.getWidth(), bitmap.getHeight());
+//
+//                    // 3. 計算 PreviewView 上實際顯示影像的縮放、偏移
+//                    float viewW = previewView.getWidth();
+//                    float viewH = previewView.getHeight();
+//                    float imgW  = bitmap.getWidth();
+//                    float imgH  = bitmap.getHeight();
+//                    // FIT_CENTER：維持長寬比，整張圖完整顯示
+//                    float scale = Math.min(viewW / imgW, viewH / imgH);
+//                    float dx = (viewW  - imgW * scale) / 2f;
+//                    float dy = (viewH  - imgH * scale) / 2f;
+//
+//                    // 4. 把每個 box 轉成 View 座標
+//                    List<DetectorMain.Recognition> viewResults = new ArrayList<>();
+//                    for (DetectorMain.Recognition r : rawResults) {
+//                        RectF b = r.getLocation();
+//                        RectF vb = new RectF(
+//                                b.left   * scale + dx,
+//                                b.top    * scale + dy,
+//                                b.right  * scale + dx,
+//                                b.bottom * scale + dy
+//                        );
+//                        r.setLocation(vb);
+//                        viewResults.add(r);
+//                    }
+//
+//                    // 5. 丟到 OverlayView 畫
+//                    overlayView.setResults(viewResults);
+//                    processPedestrianLogic(viewResults);
+//                    image.close();
+//                });
+
                 analysis.setAnalyzer(ContextCompat.getMainExecutor(this), image -> {
+                    // 1. 轉成 Bitmap
                     Bitmap bitmap = imageToBitmap(image);
                     currentBitmap = bitmap;
-                    List<DetectorMain.Recognition> resultsAll = detector.detect(bitmap, previewView.getWidth(), previewView.getHeight());
 
-                    List<DetectorMain.Recognition> allResults = new ArrayList<>();
-                    allResults.addAll(resultsAll);
+                    // 2. 用模型輸出（bitmap 座標）偵測物件
+                    List<DetectorMain.Recognition> rawResults =
+                            detector.detect(bitmap, bitmap.getWidth(), bitmap.getHeight());
 
-                    overlayView.setResults(allResults);
-                    overlayView.invalidate();             // 觸發 onDraw()
-                    Log.d("Detection", "辨識到的物件數量：" + allResults.size());
-                    processPedestrianLogic(allResults);
+                    // 3. 只對原始 bitmap 座標下的 "traffic_light" 做顏色判定
+                    for (DetectorMain.Recognition r : rawResults) {
+                        if ("traffic_light".equals(r.getTitle())) {
+                            // 傳入 rawBox（bitmap 空間）而非 view 座標
+                            String color = detectTrafficLightColor(bitmap, r.getLocation());
+                            r.setColor(color);
+                        }
+                    }
+
+                    // 4. 將所有 rawResults 的 RectF 轉成 FIT_CENTER 後的螢幕座標
+                    float viewW = previewView.getWidth();
+                    float viewH = previewView.getHeight();
+                    float imgW  = bitmap.getWidth();
+                    float imgH  = bitmap.getHeight();
+                    float scale = Math.min(viewW / imgW, viewH / imgH);
+                    float dx = (viewW  - imgW * scale) / 2f;
+                    float dy = (viewH  - imgH * scale) / 2f;
+
+                    List<DetectorMain.Recognition> viewResults = new ArrayList<>();
+                    for (DetectorMain.Recognition r : rawResults) {
+                        RectF rawBox = r.getLocation();  // bitmap 座標
+                        RectF viewBox = new RectF(
+                                rawBox.left   * scale + dx,
+                                rawBox.top    * scale + dy,
+                                rawBox.right  * scale + dx,
+                                rawBox.bottom * scale + dy
+                        );
+                        r.setLocation(viewBox);
+                        viewResults.add(r);
+                    }
+
+                    // 5. 繪製 & 邏輯
+                    overlayView.setResults(viewResults);
+                    processPedestrianLogic(viewResults);
                     image.close();
                 });
+
+
                 cameraProvider.unbindAll();
                 cameraProvider.bindToLifecycle(this, cameraSelector, preview, analysis);
 
@@ -381,6 +473,10 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private Bitmap imageToBitmap(ImageProxy image) {
+        // 1. 先拿到旋轉角度
+        int rotation = image.getImageInfo().getRotationDegrees();
+
+        // 2. NV21 -> JPEG -> 原始 Bitmap（raw）
         ImageProxy.PlaneProxy[] planes = image.getPlanes();
         ByteBuffer yBuffer = planes[0].getBuffer();
         ByteBuffer uBuffer = planes[1].getBuffer();
@@ -389,25 +485,33 @@ public class MainActivity extends AppCompatActivity {
         int ySize = yBuffer.remaining();
         int uSize = uBuffer.remaining();
         int vSize = vBuffer.remaining();
-
         byte[] nv21 = new byte[ySize + uSize + vSize];
-
         yBuffer.get(nv21, 0, ySize);
         vBuffer.get(nv21, ySize, vSize);
         uBuffer.get(nv21, ySize + vSize, uSize);
 
-        YuvImage yuvImage = new YuvImage(
-                nv21,
-                ImageFormat.NV21,
-                image.getWidth(),
-                image.getHeight(),
-                null
-        );
+        YuvImage yuv = new YuvImage(nv21, ImageFormat.NV21,
+                image.getWidth(), image.getHeight(), null);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
-        yuvImage.compressToJpeg(new Rect(0, 0, image.getWidth(), image.getHeight()), 100, out);
-        byte[] imageBytes = out.toByteArray();
-        return BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.length);
+        yuv.compressToJpeg(
+                new android.graphics.Rect(0, 0, image.getWidth(), image.getHeight()),
+                100,
+                out
+        );
+
+        byte[] jpeg = out.toByteArray();
+        Bitmap raw = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length);
+
+        // 3. 用 Matrix 把 raw 旋轉到正確方向
+        Matrix m = new Matrix();
+        m.postRotate(rotation);
+        Bitmap rotated = Bitmap.createBitmap(
+                raw, 0, 0, raw.getWidth(), raw.getHeight(), m, true);
+
+        // 4. 回傳糾正後的 Bitmap
+        return rotated;
     }
+
 
 
     private void startLocationUpdates() {
@@ -589,8 +693,8 @@ public class MainActivity extends AppCompatActivity {
                 hasCrosswalk = true;
             }
             if ("traffic_light".equals(r.getTitle())) {
-                trafficLightColor = detectTrafficLightColor(currentBitmap, r);
-                r.setColor(trafficLightColor);
+                String color = detectTrafficLightColor(currentBitmap, r.getLocation());
+                r.setColor(color);
             }
         }
 
@@ -661,44 +765,119 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+//    private String detectTrafficLightColor(Bitmap fullBmp, RectF rawBox) {
+//        // --- 1. 裁剪原始 ROI ---
+//        int x = Math.max(0, (int) rawBox.left);
+//        int y = Math.max(0, (int) rawBox.top);
+//        int w = Math.min(fullBmp.getWidth() - x, (int) rawBox.width());
+//        int h = Math.min(fullBmp.getHeight() - y, (int) rawBox.height());
+//        if (w < 30 || h < 30) return "unknown";
+//
+//        Bitmap crop = Bitmap.createBitmap(fullBmp, x, y, w, h);
+//
+//        // --- 2. 转成 Mat 并到 HSV ---
+//        Mat mat = new Mat();
+//        Utils.bitmapToMat(crop, mat);
+//        Imgproc.cvtColor(mat, mat, Imgproc.COLOR_RGBA2RGB);
+//        Imgproc.cvtColor(mat, mat, Imgproc.COLOR_RGB2HSV);
+//
+//        // --- 3. 拆出 V 通道，用 Otsu 分割最亮区 ---
+//        List<Mat> chans = new ArrayList<>();
+//        Core.split(mat, chans);
+//        Mat v = chans.get(2);
+//        Mat mask = new Mat();
+//        Imgproc.threshold(v, mask, 0, 255,
+//                Imgproc.THRESH_BINARY + Imgproc.THRESH_OTSU);
+//
+//        // --- 4. 形态学去噪、填洞 ---
+//        Mat kernel = Imgproc.getStructuringElement(
+//                Imgproc.MORPH_ELLIPSE, new Size(5, 5));
+//        Imgproc.morphologyEx(mask, mask,
+//                Imgproc.MORPH_OPEN, kernel);
+//        Imgproc.morphologyEx(mask, mask,
+//                Imgproc.MORPH_CLOSE, kernel);
+//
+//        // --- 5. 轮廓筛选：面积 & 近似圆形 ---
+//        List<MatOfPoint> contours = new ArrayList<>();
+//        Imgproc.findContours(mask, contours,
+//                new Mat(), Imgproc.RETR_EXTERNAL,
+//                Imgproc.CHAIN_APPROX_SIMPLE);
+//
+//        Mat finalMask = Mat.zeros(mask.size(), CvType.CV_8UC1);
+//        for (MatOfPoint ctr : contours) {
+//            double area = Imgproc.contourArea(ctr);
+//            if (area < 0.005 * w * h) continue;  // 太小
+//            Rect r = Imgproc.boundingRect(ctr);
+//            float ratio = r.width / (float) r.height;
+//            if (ratio < 0.6 || ratio > 1.4) continue; // 近似方圆
+//            Imgproc.drawContours(finalMask,
+//                    Arrays.asList(ctr), -1,
+//                    new Scalar(255), Core.FILLED);
+//        }
+//
+//        // --- 6. 在 finalMask 区域计算平均 HSV ---
+//        Scalar mean = Core.mean(mat, finalMask);
+//        double H = mean.val[0], S = mean.val[1], Vv = mean.val[2];
+//
+//        // --- 7. 阈值判断 ---
+//        if ((H < 10 || H > 160) && S > 100 && Vv > 100) return "red";
+//        if (H > 15 && H < 35 && S > 100 && Vv > 100)    return "yellow";
+//        if (H > 35 && H < 85 && S > 100 && Vv > 100)    return "green";
+//        return "unknown";
+//    }
 
-    private String detectTrafficLightColor(Bitmap fullBitmap, DetectorMain.Recognition lightBox) {
-        RectF box = lightBox.getLocation();
-        int x = Math.max(0, (int) box.left);
-        int y = Math.max(0, (int) box.top);
-        int w = Math.min(fullBitmap.getWidth() - x, (int)(box.right - box.left));
-        int h = Math.min(fullBitmap.getHeight() - y, (int)(box.bottom - box.top));
-        if (w < 10 || h < 10) return "unknown";
+    private String detectTrafficLightColor(Bitmap fullBmp, RectF rawBox) {
+        // 1. 裁剪 ROI
+        int x = Math.max(0, (int) rawBox.left);
+        int y = Math.max(0, (int) rawBox.top);
+        int w = Math.min(fullBmp.getWidth() - x, (int) rawBox.width());
+        int h = Math.min(fullBmp.getHeight() - y, (int) rawBox.height());
+        if (w < 30 || h < 30) return "unknown";
+        Bitmap crop = Bitmap.createBitmap(fullBmp, x, y, w, h);
 
-        // 只取中段 1/3
-        int subY = y + h / 3;
-        int subH = h / 3;
-        Bitmap cropped = Bitmap.createBitmap(fullBitmap, x, subY, w, subH);
-
+        // 2. RGBA -> BGR -> HSV
         Mat mat = new Mat();
-        Utils.bitmapToMat(cropped, mat);
-        // 先去掉 Alpha
-        Imgproc.cvtColor(mat, mat, Imgproc.COLOR_RGBA2RGB);
-        // 再转 HSV
-        Imgproc.cvtColor(mat, mat, Imgproc.COLOR_RGB2HSV);
+        Utils.bitmapToMat(crop, mat);
+        Imgproc.cvtColor(mat, mat, Imgproc.COLOR_RGBA2BGR);
+        Imgproc.cvtColor(mat, mat, Imgproc.COLOR_BGR2HSV);
 
-        Mat red1 = new Mat(), red2 = new Mat(), redMask = new Mat();
-        Core.inRange(mat, LOWER_RED1, UPPER_RED1, red1);
-        Core.inRange(mat, LOWER_RED2, UPPER_RED2, red2);
-        Core.add(red1, red2, redMask);
+        // 3. 拆出 V 通道，用 Otsu 分割最亮区
+        List<Mat> chans = new ArrayList<>();
+        Core.split(mat, chans);
+        Mat v = chans.get(2);
+        Mat mask = new Mat();
+        Imgproc.threshold(v, mask, 0, 255,
+                Imgproc.THRESH_BINARY + Imgproc.THRESH_OTSU);
 
-        Mat yellowMask = new Mat(), greenMask = new Mat();
-        Core.inRange(mat, LOWER_YELLOW, UPPER_YELLOW, yellowMask);
-        Core.inRange(mat, LOWER_GREEN,  UPPER_GREEN,  greenMask);
+        // 4. 形态学开闭去噪
+        Mat kernel = Imgproc.getStructuringElement(
+                Imgproc.MORPH_ELLIPSE, new Size(3, 3));
+        Imgproc.morphologyEx(mask, mask,
+                Imgproc.MORPH_OPEN, kernel);
+        Imgproc.morphologyEx(mask, mask,
+                Imgproc.MORPH_CLOSE, kernel);
 
-        double redCount    = Core.countNonZero(redMask);
-        double yellowCount = Core.countNonZero(yellowMask);
-        double greenCount  = Core.countNonZero(greenMask);
+        // 5. 统计三色掩膜
+        Mat maskR = new Mat(), maskY = new Mat(), maskG = new Mat();
+        // 红：低 H 和 高 H 两段
+        Mat tmpR = new Mat();
+        Core.inRange(mat, new Scalar(0,  60, 60), new Scalar(10, 255, 255), maskR);
+        Core.inRange(mat, new Scalar(160,60, 60), new Scalar(180,255,255), tmpR);
+        Core.add(maskR, tmpR, maskR);
+        // 黄
+        Core.inRange(mat, new Scalar(15, 60, 60), new Scalar(35, 255, 255), maskY);
+        // 绿
+        Core.inRange(mat, new Scalar(35, 60, 60), new Scalar(85, 255, 255), maskG);
 
-        final double MIN_COUNT = 100;
-        if (redCount    > yellowCount && redCount    > greenCount && redCount    > MIN_COUNT) return "red";
-        if (yellowCount > redCount    && yellowCount > greenCount && yellowCount > MIN_COUNT) return "yellow";
-        if (greenCount  > redCount    && greenCount  > yellowCount&& greenCount  > MIN_COUNT) return "green";
+        int total = w * h;
+        double ratioR = Core.countNonZero(maskR) / (double) total;
+        double ratioY = Core.countNonZero(maskY) / (double) total;
+        double ratioG = Core.countNonZero(maskG) / (double) total;
+
+        // 6. 阈值判断
+        if (ratioR > 0.03 && ratioR > ratioY && ratioR > ratioG) return "red";
+        if (ratioY > 0.03 && ratioY > ratioR && ratioY > ratioG) return "yellow";
+        if (ratioG > 0.03 && ratioG > ratioR && ratioG > ratioY) return "green";
         return "unknown";
     }
 
