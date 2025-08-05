@@ -211,84 +211,58 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void startCamera() {
-        ListenableFuture<ProcessCameraProvider> cameraProviderFuture = ProcessCameraProvider.getInstance(this);
+        ListenableFuture<ProcessCameraProvider> cameraProviderFuture =
+                ProcessCameraProvider.getInstance(this);
         cameraProviderFuture.addListener(() -> {
             try {
                 ProcessCameraProvider cameraProvider = cameraProviderFuture.get();
+
+                // 1. Preview 設定
                 Preview preview = new Preview.Builder().build();
                 previewView.setImplementationMode(PreviewView.ImplementationMode.COMPATIBLE);
                 previewView.setScaleType(PreviewView.ScaleType.FIT_CENTER);
                 preview.setTargetRotation(previewView.getDisplay().getRotation());
                 preview.setSurfaceProvider(previewView.getSurfaceProvider());
 
+                // 2. 選擇後鏡頭
                 CameraSelector cameraSelector = new CameraSelector.Builder()
                         .requireLensFacing(CameraSelector.LENS_FACING_BACK)
                         .build();
 
+                // 3. ImageAnalysis 設定
                 ImageAnalysis analysis = new ImageAnalysis.Builder()
                         .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                         .build();
-
                 analysis.setTargetRotation(previewView.getDisplay().getRotation());
 
-//                analysis.setAnalyzer(ContextCompat.getMainExecutor(this), image -> {
-//                    // 1. 先把 ImageProxy 轉成 Bitmap
-//                    Bitmap bitmap = imageToBitmap(image);
-//                    currentBitmap = bitmap;
-//
-//                    // 2. 模型回傳的 recognitions，假設它們的 RectF 是 bitmap 尺寸之座標
-//                    List<DetectorMain.Recognition> rawResults =
-//                            detector.detect(bitmap, bitmap.getWidth(), bitmap.getHeight());
-//
-//                    // 3. 計算 PreviewView 上實際顯示影像的縮放、偏移
-//                    float viewW = previewView.getWidth();
-//                    float viewH = previewView.getHeight();
-//                    float imgW  = bitmap.getWidth();
-//                    float imgH  = bitmap.getHeight();
-//                    // FIT_CENTER：維持長寬比，整張圖完整顯示
-//                    float scale = Math.min(viewW / imgW, viewH / imgH);
-//                    float dx = (viewW  - imgW * scale) / 2f;
-//                    float dy = (viewH  - imgH * scale) / 2f;
-//
-//                    // 4. 把每個 box 轉成 View 座標
-//                    List<DetectorMain.Recognition> viewResults = new ArrayList<>();
-//                    for (DetectorMain.Recognition r : rawResults) {
-//                        RectF b = r.getLocation();
-//                        RectF vb = new RectF(
-//                                b.left   * scale + dx,
-//                                b.top    * scale + dy,
-//                                b.right  * scale + dx,
-//                                b.bottom * scale + dy
-//                        );
-//                        r.setLocation(vb);
-//                        viewResults.add(r);
-//                    }
-//
-//                    // 5. 丟到 OverlayView 畫
-//                    overlayView.setResults(viewResults);
-//                    processPedestrianLogic(viewResults);
-//                    image.close();
-//                });
-
+                // 4. 設定 Analyzer
                 analysis.setAnalyzer(ContextCompat.getMainExecutor(this), image -> {
-                    // 1. 轉成 Bitmap
+                    // 4.1 轉成 Bitmap
                     Bitmap bitmap = imageToBitmap(image);
                     currentBitmap = bitmap;
 
-                    // 2. 用模型輸出（bitmap 座標）偵測物件
+                    // 4.2 模型檢測
                     List<DetectorMain.Recognition> rawResults =
                             detector.detect(bitmap, bitmap.getWidth(), bitmap.getHeight());
 
-                    // 3. 只對原始 bitmap 座標下的 "traffic_light" 做顏色判定
+                    // 4.3 收集所有 traffic_light
+                    List<DetectorMain.Recognition> tlResults = new ArrayList<>();
                     for (DetectorMain.Recognition r : rawResults) {
                         if ("traffic_light".equals(r.getTitle())) {
-                            // 傳入 rawBox（bitmap 空間）而非 view 座標
-                            String color = detectTrafficLightColor(bitmap, r.getLocation());
-                            r.setColor(color);
+                            tlResults.add(r);
                         }
                     }
 
-                    // 4. 將所有 rawResults 的 RectF 轉成 FIT_CENTER 後的螢幕座標
+                    // 4.4 Non-Max Suppression，去掉重疊度 > 0.5 的重複框
+                    List<DetectorMain.Recognition> tlFiltered = nonMaxSuppression(tlResults, 0.5f);
+
+                    // 4.5 對每個框做顏色判定
+                    for (DetectorMain.Recognition tl : tlFiltered) {
+                        String color = detectTrafficLightColor(bitmap, tl.getLocation());
+                        tl.setColor(color);
+                    }
+
+                    // 4.6 把 rawResults->viewResults 繪製
                     float viewW = previewView.getWidth();
                     float viewH = previewView.getHeight();
                     float imgW  = bitmap.getWidth();
@@ -299,7 +273,7 @@ public class MainActivity extends AppCompatActivity {
 
                     List<DetectorMain.Recognition> viewResults = new ArrayList<>();
                     for (DetectorMain.Recognition r : rawResults) {
-                        RectF rawBox = r.getLocation();  // bitmap 座標
+                        RectF rawBox = r.getLocation();
                         RectF viewBox = new RectF(
                                 rawBox.left   * scale + dx,
                                 rawBox.top    * scale + dy,
@@ -310,13 +284,14 @@ public class MainActivity extends AppCompatActivity {
                         viewResults.add(r);
                     }
 
-                    // 5. 繪製 & 邏輯
+                    // 4.7 繪製 & 邏輯
                     overlayView.setResults(viewResults);
                     processPedestrianLogic(viewResults);
+
                     image.close();
                 });
 
-
+                // 5. 綁定 lifecycle
                 cameraProvider.unbindAll();
                 cameraProvider.bindToLifecycle(this, cameraSelector, preview, analysis);
 
@@ -325,6 +300,7 @@ public class MainActivity extends AppCompatActivity {
             }
         }, ContextCompat.getMainExecutor(this));
     }
+
 
     private Bitmap imageToBitmap(ImageProxy image) {
         // 1. 先拿到旋轉角度
@@ -518,42 +494,56 @@ public class MainActivity extends AppCompatActivity {
         float personDistance = -1f;
         String trafficLightColor = "unknown";
 
-
+        // 1) 打印所有标签
         for (DetectorMain.Recognition r : recognitions) {
-            if ("person".equals(r.getTitle())) {
+            Log.d("DEBUG_DET", "Detected title=" + r.getTitle()
+                    + "  bbox=" + r.getLocation()
+                    + "  conf=" + r.getConfidence());
+        }
+
+        // 2) 处理逻辑
+        for (DetectorMain.Recognition r : recognitions) {
+            String title = r.getTitle().toLowerCase();
+            RectF loc = r.getLocation();
+
+            if (title.contains("person")) {
                 hasPerson = true;
-                float h = r.getLocation().height();
-                if (h > 0) {
-                    personDistance = DISTANCE_SCALING_FACTOR / h;
-                }
+                float h = loc.height();
+                if (h > 0) personDistance = DISTANCE_SCALING_FACTOR / h;
             }
-            if ("crosswalk".equals(r.getTitle())) {
+
+            if (title.contains("crosswalk")) {
                 hasCrosswalk = true;
             }
-            if ("traffic_light".equals(r.getTitle())) {
-                String color = detectTrafficLightColor(currentBitmap, r.getLocation());
-                r.setColor(color);
+
+            if (title.contains("traffic")) {
+                // 直接讀取剛剛在 analyzer 存好的顏色
+                String color = r.getColor();
+                Log.d("DEBUG_TL", "TrafficLight color (預先偵測) = " + color);
+                trafficLightColor = color;
             }
+
         }
 
         if (!hasPerson || personDistance < 0) return;
 
         switch (sensitivityLevel) {
-            case 3: // 高靈敏度：只要行人接近即可提醒
+            case 3:
                 if (personDistance <= 20f) {
                     triggerVibrationOnce("高靈敏度：行人接近");
                     speakOnce("前方有行人，請注意");
                     sendAlertNotification("行人靠近", "前方有行人，請小心慢行");
                 }
                 break;
-            case 2: // 中靈敏度：行人 + 斑馬線
+            case 2:
                 if (hasCrosswalk && personDistance <= 15f) {
                     triggerVibrationOnce("中靈敏度：行人+斑馬線");
                     speakOnce("行人準備過馬路，請減速");
                     sendAlertNotification("行人靠近", "前方有行人，請小心慢行");
                 }
                 break;
-            case 1: // 低靈敏度：行人 + 斑馬線 + 綠燈
+            case 1:
+                // 这里 trafficLightColor 已经被正确赋值了
                 if (hasCrosswalk && personDistance <= 10f && "green".equals(trafficLightColor)) {
                     triggerVibrationOnce("低靈敏度：綠燈+行人+斑馬線");
                     speakOnce("綠燈期間有行人過馬路，請讓行");
@@ -602,120 +592,123 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-//    private String detectTrafficLightColor(Bitmap fullBmp, RectF rawBox) {
-//        // --- 1. 裁剪原始 ROI ---
-//        int x = Math.max(0, (int) rawBox.left);
-//        int y = Math.max(0, (int) rawBox.top);
-//        int w = Math.min(fullBmp.getWidth() - x, (int) rawBox.width());
-//        int h = Math.min(fullBmp.getHeight() - y, (int) rawBox.height());
-//        if (w < 30 || h < 30) return "unknown";
-//
-//        Bitmap crop = Bitmap.createBitmap(fullBmp, x, y, w, h);
-//
-//        // --- 2. 转成 Mat 并到 HSV ---
-//        Mat mat = new Mat();
-//        Utils.bitmapToMat(crop, mat);
-//        Imgproc.cvtColor(mat, mat, Imgproc.COLOR_RGBA2RGB);
-//        Imgproc.cvtColor(mat, mat, Imgproc.COLOR_RGB2HSV);
-//
-//        // --- 3. 拆出 V 通道，用 Otsu 分割最亮区 ---
-//        List<Mat> chans = new ArrayList<>();
-//        Core.split(mat, chans);
-//        Mat v = chans.get(2);
-//        Mat mask = new Mat();
-//        Imgproc.threshold(v, mask, 0, 255,
-//                Imgproc.THRESH_BINARY + Imgproc.THRESH_OTSU);
-//
-//        // --- 4. 形态学去噪、填洞 ---
-//        Mat kernel = Imgproc.getStructuringElement(
-//                Imgproc.MORPH_ELLIPSE, new Size(5, 5));
-//        Imgproc.morphologyEx(mask, mask,
-//                Imgproc.MORPH_OPEN, kernel);
-//        Imgproc.morphologyEx(mask, mask,
-//                Imgproc.MORPH_CLOSE, kernel);
-//
-//        // --- 5. 轮廓筛选：面积 & 近似圆形 ---
-//        List<MatOfPoint> contours = new ArrayList<>();
-//        Imgproc.findContours(mask, contours,
-//                new Mat(), Imgproc.RETR_EXTERNAL,
-//                Imgproc.CHAIN_APPROX_SIMPLE);
-//
-//        Mat finalMask = Mat.zeros(mask.size(), CvType.CV_8UC1);
-//        for (MatOfPoint ctr : contours) {
-//            double area = Imgproc.contourArea(ctr);
-//            if (area < 0.005 * w * h) continue;  // 太小
-//            Rect r = Imgproc.boundingRect(ctr);
-//            float ratio = r.width / (float) r.height;
-//            if (ratio < 0.6 || ratio > 1.4) continue; // 近似方圆
-//            Imgproc.drawContours(finalMask,
-//                    Arrays.asList(ctr), -1,
-//                    new Scalar(255), Core.FILLED);
-//        }
-//
-//        // --- 6. 在 finalMask 区域计算平均 HSV ---
-//        Scalar mean = Core.mean(mat, finalMask);
-//        double H = mean.val[0], S = mean.val[1], Vv = mean.val[2];
-//
-//        // --- 7. 阈值判断 ---
-//        if ((H < 10 || H > 160) && S > 100 && Vv > 100) return "red";
-//        if (H > 15 && H < 35 && S > 100 && Vv > 100)    return "yellow";
-//        if (H > 35 && H < 85 && S > 100 && Vv > 100)    return "green";
-//        return "unknown";
-//    }
+
 
     private String detectTrafficLightColor(Bitmap fullBmp, RectF rawBox) {
-        // 1. 裁剪 ROI
-        int x = Math.max(0, (int) rawBox.left);
-        int y = Math.max(0, (int) rawBox.top);
-        int w = Math.min(fullBmp.getWidth() - x, (int) rawBox.width());
-        int h = Math.min(fullBmp.getHeight() - y, (int) rawBox.height());
-        if (w < 30 || h < 30) return "unknown";
-        Bitmap crop = Bitmap.createBitmap(fullBmp, x, y, w, h);
+        Mat mat       = new Mat();
+        Mat mask      = new Mat();
+        Mat maskLight = new Mat();
+        Mat kernel    = null;
+        List<Mat> hsv = new ArrayList<>();
 
-        // 2. RGBA -> BGR -> HSV
-        Mat mat = new Mat();
-        Utils.bitmapToMat(crop, mat);
-        Imgproc.cvtColor(mat, mat, Imgproc.COLOR_RGBA2BGR);
-        Imgproc.cvtColor(mat, mat, Imgproc.COLOR_BGR2HSV);
+        // 三色掩膜也要释放
+        Mat redMask    = new Mat(), tmpRed = new Mat();
+        Mat yellowMask = new Mat(), greenMask = new Mat();
 
-        // 3. 拆出 V 通道，用 Otsu 分割最亮区
-        List<Mat> chans = new ArrayList<>();
-        Core.split(mat, chans);
-        Mat v = chans.get(2);
-        Mat mask = new Mat();
-        Imgproc.threshold(v, mask, 0, 255,
-                Imgproc.THRESH_BINARY + Imgproc.THRESH_OTSU);
+        try {
+            // 1. 裁剪 ROI
+            int x    = Math.max(0, (int) rawBox.left);
+            int y    = Math.max(0, (int) rawBox.top);
+            int w    = Math.min(fullBmp.getWidth() - x, (int) rawBox.width());
+            int hROI = Math.min(fullBmp.getHeight() - y, (int) rawBox.height());
+            if (w < 30 || hROI < 30) return "unknown";
+            Bitmap crop = Bitmap.createBitmap(fullBmp, x, y, w, hROI);
 
-        // 4. 形态学开闭去噪
-        Mat kernel = Imgproc.getStructuringElement(
-                Imgproc.MORPH_ELLIPSE, new Size(3, 3));
-        Imgproc.morphologyEx(mask, mask,
-                Imgproc.MORPH_OPEN, kernel);
-        Imgproc.morphologyEx(mask, mask,
-                Imgproc.MORPH_CLOSE, kernel);
+            // 2. RGBA -> BGR -> HSV
+            Utils.bitmapToMat(crop, mat);
+            Imgproc.cvtColor(mat, mat, Imgproc.COLOR_RGBA2BGR);
+            Imgproc.cvtColor(mat, mat, Imgproc.COLOR_BGR2HSV);
 
-        // 5. 统计三色掩膜
-        Mat maskR = new Mat(), maskY = new Mat(), maskG = new Mat();
-        // 红：低 H 和 高 H 两段
-        Mat tmpR = new Mat();
-        Core.inRange(mat, new Scalar(0,  60, 60), new Scalar(10, 255, 255), maskR);
-        Core.inRange(mat, new Scalar(160,60, 60), new Scalar(180,255,255), tmpR);
-        Core.add(maskR, tmpR, maskR);
-        // 黄
-        Core.inRange(mat, new Scalar(15, 60, 60), new Scalar(35, 255, 255), maskY);
-        // 绿
-        Core.inRange(mat, new Scalar(35, 60, 60), new Scalar(85, 255, 255), maskG);
+            // 3. 拆出 H/S/V
+            Core.split(mat, hsv);
+            Mat hueChan   = hsv.get(0);
+            Mat satChan   = hsv.get(1);
+            Mat valueChan = hsv.get(2);
 
-        int total = w * h;
-        double ratioR = Core.countNonZero(maskR) / (double) total;
-        double ratioY = Core.countNonZero(maskY) / (double) total;
-        double ratioG = Core.countNonZero(maskG) / (double) total;
+            // 4. Otsu on V 得最亮区
+            Imgproc.threshold(valueChan, mask,
+                    0, 255, Imgproc.THRESH_BINARY + Imgproc.THRESH_OTSU);
+            // 可加饱和度过滤去掉壳反光
+            Mat satMask = new Mat();
+            Imgproc.threshold(satChan, satMask, 100, 255, Imgproc.THRESH_BINARY);
+            Core.bitwise_and(mask, satMask, mask);
+            satMask.release();
 
-        // 6. 阈值判断
-        if (ratioR > 0.03 && ratioR > ratioY && ratioR > ratioG) return "red";
-        if (ratioY > 0.03 && ratioY > ratioR && ratioY > ratioG) return "yellow";
-        if (ratioG > 0.03 && ratioG > ratioR && ratioG > ratioY) return "green";
-        return "unknown";
+            // 5. 开闭去噪
+            kernel = Imgproc.getStructuringElement(
+                    Imgproc.MORPH_ELLIPSE, new Size(3, 3));
+            Imgproc.morphologyEx(mask, mask, Imgproc.MORPH_OPEN,  kernel);
+            Imgproc.morphologyEx(mask, mask, Imgproc.MORPH_CLOSE, kernel);
+
+            // 6. 找最大轮廓当灯泡
+            List<MatOfPoint> contours = new ArrayList<>();
+            Imgproc.findContours(mask.clone(), contours,
+                    new Mat(), Imgproc.RETR_EXTERNAL, Imgproc.CHAIN_APPROX_SIMPLE);
+            maskLight = Mat.zeros(mask.size(), mask.type());
+            if (!contours.isEmpty()) {
+                double maxA = 0; int idx = 0;
+                for (int i = 0; i < contours.size(); i++) {
+                    double a = Imgproc.contourArea(contours.get(i));
+                    if (a > maxA) { maxA = a; idx = i; }
+                }
+                Imgproc.drawContours(maskLight, contours, idx, new Scalar(255), -1);
+            } else {
+                maskLight = mask.clone();
+            }
+
+            // ===== STEP 8：分别生成三色掩膜并统计 =====
+            // 红：低 H 和 高 H 两段
+            Core.inRange(mat, LOWER_RED1, UPPER_RED1, redMask);
+            Core.inRange(mat, LOWER_RED2, UPPER_RED2, tmpRed);
+            Core.add(redMask, tmpRed, redMask);
+
+            // 黄
+            Core.inRange(mat, LOWER_YELLOW, UPPER_YELLOW, yellowMask);
+
+            // 绿
+            Core.inRange(mat, LOWER_GREEN, UPPER_GREEN, greenMask);
+
+            // 与最亮区相交，去掉灯壳与背景
+            Core.bitwise_and(redMask,   maskLight, redMask);
+            Core.bitwise_and(yellowMask,maskLight, yellowMask);
+            Core.bitwise_and(greenMask, maskLight, greenMask);
+
+            // 统计
+            int cntR  = Core.countNonZero(redMask);
+            int cntY  = Core.countNonZero(yellowMask);
+            int cntG  = Core.countNonZero(greenMask);
+            int total = Core.countNonZero(maskLight);
+
+            double ratioR = cntR / (double) total;
+            double ratioY = cntY / (double) total;
+            double ratioG = cntG / (double) total;
+
+            Log.d("DEBUG_TL", String.format(
+                    "ColorRatios R=%.3f Y=%.3f G=%.3f", ratioR, ratioY, ratioG));
+
+            // 最终判色（阈值可调）
+            if (ratioR > ratioY && ratioR > ratioG && ratioR > 0.10) {
+                return "red";
+            } else if (ratioY > ratioR && ratioY > ratioG && ratioY > 0.10) {
+                return "yellow";
+            } else if (ratioG > ratioR && ratioG > ratioY && ratioG > 0.10) {
+                return "green";
+            } else {
+                return "unknown";
+            }
+
+        } finally {
+            // 释放所有 Mat
+            mat.release();
+            mask.release();
+            maskLight.release();
+            if (kernel   != null) kernel.release();
+            for (Mat m : hsv)        m.release();
+            redMask.release();
+            tmpRed.release();
+            yellowMask.release();
+            greenMask.release();
+        }
     }
 
 
@@ -747,5 +740,42 @@ public class MainActivity extends AppCompatActivity {
         }
         super.onDestroy();
     }
+
+    private List<DetectorMain.Recognition> nonMaxSuppression(
+            List<DetectorMain.Recognition> tlList, float iouThreshold) {
+        // 按 confidence 由大到小排序
+        tlList.sort((a, b) -> Float.compare(b.getConfidence(), a.getConfidence()));
+        List<DetectorMain.Recognition> kept = new ArrayList<>();
+        boolean[] removed = new boolean[tlList.size()];
+
+        for (int i = 0; i < tlList.size(); i++) {
+            if (removed[i]) continue;
+            DetectorMain.Recognition a = tlList.get(i);
+            kept.add(a);
+            RectF boxA = a.getLocation();
+
+            for (int j = i + 1; j < tlList.size(); j++) {
+                if (removed[j]) continue;
+                DetectorMain.Recognition b = tlList.get(j);
+                if (boxIoU(boxA, b.getLocation()) > iouThreshold) {
+                    removed[j] = true;
+                }
+            }
+        }
+        return kept;
+    }
+    private float boxIoU(RectF a, RectF b) {
+        float left   = Math.max(a.left,   b.left);
+        float right  = Math.min(a.right,  b.right);
+        float top    = Math.max(a.top,    b.top);
+        float bottom = Math.min(a.bottom, b.bottom);
+        float interW = Math.max(0f, right - left);
+        float interH = Math.max(0f, bottom - top);
+        float inter  = interW * interH;
+        float areaA  = (a.right - a.left) * (a.bottom - a.top);
+        float areaB  = (b.right - b.left) * (b.bottom - b.top);
+        return inter / (areaA + areaB - inter);
+    }
+
 
 }
