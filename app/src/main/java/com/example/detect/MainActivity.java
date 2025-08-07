@@ -19,7 +19,9 @@ import android.os.Bundle;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.util.Log;
+import android.view.Display;
 import android.view.LayoutInflater;
+import android.view.Surface;
 import android.view.View;
 import android.widget.Button;
 import android.widget.ImageButton;
@@ -207,6 +209,8 @@ public class MainActivity extends AppCompatActivity {
         requestBluetoothPermissions(); // 呼叫藍牙權限請
 
 
+        createNotificationChannel();
+        findViewById(R.id.btnSettings).setOnClickListener(v -> showSettingsDialog());
     }
     //加入藍芽權限請求
     private void requestBluetoothPermissions() {
@@ -357,94 +361,92 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void startCamera() {
-        ListenableFuture<ProcessCameraProvider> cameraProviderFuture =
-                ProcessCameraProvider.getInstance(this);
-        cameraProviderFuture.addListener(() -> {
-            try {
-                ProcessCameraProvider cameraProvider = cameraProviderFuture.get();
+        previewView.post(() -> {
+            ListenableFuture<ProcessCameraProvider> cameraProviderFuture =
+                    ProcessCameraProvider.getInstance(this);
 
-                // 1. Preview 設定
-                Preview preview = new Preview.Builder().build();
-                previewView.setImplementationMode(PreviewView.ImplementationMode.COMPATIBLE);
-                previewView.setScaleType(PreviewView.ScaleType.FIT_CENTER);
-                preview.setTargetRotation(previewView.getDisplay().getRotation());
-                preview.setSurfaceProvider(previewView.getSurfaceProvider());
+            cameraProviderFuture.addListener(() -> {
+                try {
+                    ProcessCameraProvider cameraProvider = cameraProviderFuture.get();
 
-                // 2. 選擇後鏡頭
-                CameraSelector cameraSelector = new CameraSelector.Builder()
-                        .requireLensFacing(CameraSelector.LENS_FACING_BACK)
-                        .build();
+                    // 1. Preview 設定
+                    Preview preview = new Preview.Builder().build();
+                    previewView.setImplementationMode(PreviewView.ImplementationMode.COMPATIBLE);
+                    previewView.setScaleType(PreviewView.ScaleType.FIT_CENTER);
 
-                // 3. ImageAnalysis 設定
-                ImageAnalysis analysis = new ImageAnalysis.Builder()
-                        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                        .build();
-                analysis.setTargetRotation(previewView.getDisplay().getRotation());
+                    // 安全取得旋轉
+                    Display display = previewView.getDisplay();
+                    int rotation = (display != null) ? display.getRotation() : Surface.ROTATION_0;
+                    preview.setTargetRotation(rotation);
 
-                // 4. 設定 Analyzer
-                analysis.setAnalyzer(ContextCompat.getMainExecutor(this), image -> {
-                    // 4.1 轉成 Bitmap
-                    Bitmap bitmap = imageToBitmap(image);
-                    currentBitmap = bitmap;
+                    preview.setSurfaceProvider(previewView.getSurfaceProvider());
 
-                    // 4.2 模型檢測
-                    List<DetectorMain.Recognition> rawResults =
-                            detector.detect(bitmap, bitmap.getWidth(), bitmap.getHeight());
+                    // 2. 選擇後鏡頭
+                    CameraSelector cameraSelector = new CameraSelector.Builder()
+                            .requireLensFacing(CameraSelector.LENS_FACING_BACK)
+                            .build();
 
-                    // 4.3 收集所有 traffic_light
-                    List<DetectorMain.Recognition> tlResults = new ArrayList<>();
-                    for (DetectorMain.Recognition r : rawResults) {
-                        if ("traffic_light".equals(r.getTitle())) {
-                            tlResults.add(r);
+                    // 3. ImageAnalysis 設定
+                    ImageAnalysis analysis = new ImageAnalysis.Builder()
+                            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                            .build();
+                    analysis.setTargetRotation(rotation);
+
+                    // 4. 設定 Analyzer
+                    analysis.setAnalyzer(ContextCompat.getMainExecutor(this), image -> {
+                        Bitmap bitmap = imageToBitmap(image);
+                        currentBitmap = bitmap;
+
+                        List<DetectorMain.Recognition> rawResults =
+                                detector.detect(bitmap, bitmap.getWidth(), bitmap.getHeight());
+
+                        List<DetectorMain.Recognition> tlResults = new ArrayList<>();
+                        for (DetectorMain.Recognition r : rawResults) {
+                            if ("traffic_light".equals(r.getTitle())) {
+                                tlResults.add(r);
+                            }
                         }
-                    }
 
-                    // 4.4 Non-Max Suppression，去掉重疊度 > 0.5 的重複框
-                    List<DetectorMain.Recognition> tlFiltered = nonMaxSuppression(tlResults, 0.5f);
+                        List<DetectorMain.Recognition> tlFiltered = nonMaxSuppression(tlResults, 0.5f);
+                        for (DetectorMain.Recognition tl : tlFiltered) {
+                            String color = detectTrafficLightColor(bitmap, tl.getLocation());
+                            tl.setColor(color);
+                        }
 
-                    // 4.5 對每個框做顏色判定
-                    for (DetectorMain.Recognition tl : tlFiltered) {
-                        String color = detectTrafficLightColor(bitmap, tl.getLocation());
-                        tl.setColor(color);
-                    }
+                        float viewW = previewView.getWidth();
+                        float viewH = previewView.getHeight();
+                        float imgW  = bitmap.getWidth();
+                        float imgH  = bitmap.getHeight();
+                        float scale = Math.min(viewW / imgW, viewH / imgH);
+                        float dx = (viewW  - imgW * scale) / 2f;
+                        float dy = (viewH  - imgH * scale) / 2f;
 
-                    // 4.6 把 rawResults->viewResults 繪製
-                    float viewW = previewView.getWidth();
-                    float viewH = previewView.getHeight();
-                    float imgW  = bitmap.getWidth();
-                    float imgH  = bitmap.getHeight();
-                    float scale = Math.min(viewW / imgW, viewH / imgH);
-                    float dx = (viewW  - imgW * scale) / 2f;
-                    float dy = (viewH  - imgH * scale) / 2f;
+                        List<DetectorMain.Recognition> viewResults = new ArrayList<>();
+                        for (DetectorMain.Recognition r : rawResults) {
+                            RectF rawBox = r.getLocation();
+                            RectF viewBox = new RectF(
+                                    rawBox.left   * scale + dx,
+                                    rawBox.top    * scale + dy,
+                                    rawBox.right  * scale + dx,
+                                    rawBox.bottom * scale + dy
+                            );
+                            r.setLocation(viewBox);
+                            viewResults.add(r);
+                        }
 
-                    List<DetectorMain.Recognition> viewResults = new ArrayList<>();
-                    for (DetectorMain.Recognition r : rawResults) {
-                        RectF rawBox = r.getLocation();
-                        RectF viewBox = new RectF(
-                                rawBox.left   * scale + dx,
-                                rawBox.top    * scale + dy,
-                                rawBox.right  * scale + dx,
-                                rawBox.bottom * scale + dy
-                        );
-                        r.setLocation(viewBox);
-                        viewResults.add(r);
-                    }
+                        overlayView.setResults(viewResults);
+                        processPedestrianLogic(viewResults);
+                        image.close();
+                    });
 
-                    // 4.7 繪製 & 邏輯
-                    overlayView.setResults(viewResults);
-                    processPedestrianLogic(viewResults);
+                    cameraProvider.unbindAll();
+                    cameraProvider.bindToLifecycle(this, cameraSelector, preview, analysis);
 
-                    image.close();
-                });
-
-                // 5. 綁定 lifecycle
-                cameraProvider.unbindAll();
-                cameraProvider.bindToLifecycle(this, cameraSelector, preview, analysis);
-
-            } catch (ExecutionException | InterruptedException e) {
-                Log.e("CameraX", "Camera initialization failed", e);
-            }
-        }, ContextCompat.getMainExecutor(this));
+                } catch (ExecutionException | InterruptedException e) {
+                    Log.e("CameraX", "Camera initialization failed", e);
+                }
+            }, ContextCompat.getMainExecutor(this));
+        });
     }
 
 
