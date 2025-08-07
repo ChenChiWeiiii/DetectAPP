@@ -25,42 +25,41 @@
         android:scaleType="fitXY"
         android:src="@drawable/vector2" />
 
-    <!-- ScrollView 包住整個登入區域 -->
+    <!-- ScrollView 包住整個登入區域，並垂直置中 -->
     <ScrollView
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:layout_marginTop="200dp"
-        android:layout_marginBottom="100dp"
+        android:layout_height="wrap_content"
+        android:layout_centerVertical="true"
         android:layout_alignParentStart="true"
         android:layout_alignParentEnd="true"
-        android:layout_alignParentTop="true"
-        android:layout_alignParentBottom="true">
+        android:fillViewport="true">
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:padding="24dp">
+            android:padding="24dp"
+            android:gravity="center_horizontal">
 
             <TextView
                 android:id="@+id/loginTitle"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Hello"
-                android:textSize="36sp"
-                android:textStyle="bold"
                 android:layout_marginTop="48dp"
-                android:layout_gravity="center_horizontal" />
+                android:gravity="center"
+                android:text="Hello"
+                android:textSize="36dp"
+                android:textStyle="bold" />
 
             <TextView
                 android:id="@+id/loginTitle2"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:gravity="center"
                 android:text="Sign in to your account"
-                android:textSize="24sp"
-                android:textStyle="bold"
-                android:layout_marginTop="0dp"
-                android:layout_gravity="center_horizontal" />
+                android:textSize="24dp"
+                android:textStyle="bold" />
 
             <EditText
                 android:id="@+id/et_signin_email"
@@ -88,58 +87,57 @@
                 android:id="@+id/forgotPassword"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:layout_gravity="end"
                 android:text="Forgot Password?"
                 android:textColor="#1E88E5"
-                android:layout_marginTop="8dp"
-                android:layout_gravity="end" />
+                android:textSize="14dp" />
 
-            <!-- 漸層容器：文字在左、箭頭在右 -->
+            <!-- Sign in 按鈕，靠右排列且不會超出 -->
             <LinearLayout
                 android:id="@+id/btn_signin_signin"
                 android:layout_width="wrap_content"
                 android:layout_height="43dp"
                 android:layout_marginTop="24dp"
-                android:layout_marginLeft="127dp"
-                android:layout_gravity="center_horizontal"
-                android:orientation="horizontal"
-                android:gravity="center_vertical"
+                android:layout_gravity="end"
+                android:layout_marginEnd="24dp"
+                android:background="@drawable/gradient_button"
                 android:clickable="true"
                 android:focusable="true"
-                android:background="@drawable/gradient_button">
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp">
 
-                <!-- Sign in 純文字 -->
                 <TextView
                     android:id="@+id/signInText"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
+                    android:paddingEnd="8dp"
                     android:text="Sign in"
                     android:textColor="#FFFFFF"
-                    android:textSize="14sp"
-                    android:paddingStart="16dp"
-                    android:paddingEnd="8dp" />
+                    android:textSize="14sp" />
 
-                <!-- 只有箭頭的 TextView -->
                 <TextView
                     android:id="@+id/signInArrow"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
+                    android:paddingStart="8dp"
                     android:text="→"
                     android:textColor="#FFFFFF"
-                    android:textSize="14sp"
-                    android:paddingStart="8dp"
-                    android:paddingEnd="16dp" />
+                    android:textSize="14dp" />
             </LinearLayout>
 
             <TextView
                 android:id="@+id/tv_signin_signup"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:gravity="center"
                 android:text="Don't have an account? Sign Up"
                 android:textColor="#1E88E5"
-                android:layout_marginTop="16dp"
-                android:layout_gravity="center_horizontal" />
+                android:textSize="14dp" />
 
         </LinearLayout>
     </ScrollView>
-
 </RelativeLayout>
