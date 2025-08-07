@@ -190,7 +190,7 @@ public class MainActivity extends AppCompatActivity {
             e.printStackTrace();
         }
 
-        if (detector == null ) {//
+        if (detector == null ) {
             Toast.makeText(this, "模型載入失敗，請確認 assets 資料夾內有 best_float16.tflite", Toast.LENGTH_LONG).show();
             finish();
             return;
@@ -776,7 +776,7 @@ public class MainActivity extends AppCompatActivity {
             int y    = Math.max(0, (int) rawBox.top);
             int w    = Math.min(fullBmp.getWidth() - x, (int) rawBox.width());
             int hROI = Math.min(fullBmp.getHeight() - y, (int) rawBox.height());
-            if (w < 30 || hROI < 30) return "unknown";
+            if (w < 15 || hROI < 15) return "unknown";
             Bitmap crop = Bitmap.createBitmap(fullBmp, x, y, w, hROI);
 
             // 2. RGBA -> BGR -> HSV
@@ -851,12 +851,14 @@ public class MainActivity extends AppCompatActivity {
             Log.d("DEBUG_TL", String.format(
                     "ColorRatios R=%.3f Y=%.3f G=%.3f", ratioR, ratioY, ratioG));
 
+            if (total < 5) return "unknown";
+
             // 最终判色（阈值可调）
-            if (ratioR > ratioY && ratioR > ratioG && ratioR > 0.10) {
+            if (ratioR > ratioY && ratioR > ratioG && ratioR > 0.05) {
                 return "red";
-            } else if (ratioY > ratioR && ratioY > ratioG && ratioY > 0.10) {
+            } else if (ratioY > ratioR && ratioY > ratioG && ratioY > 0.05) {
                 return "yellow";
-            } else if (ratioG > ratioR && ratioG > ratioY && ratioG > 0.10) {
+            } else if (ratioG > ratioR && ratioG > ratioY && ratioG > 0.05) {
                 return "green";
             } else {
                 return "unknown";

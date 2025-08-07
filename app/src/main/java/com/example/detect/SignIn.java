@@ -33,11 +33,6 @@ public class SignIn extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        // 清除舊的 prefs
-        getSharedPreferences("user_prefs", MODE_PRIVATE)
-                .edit()
-                .clear()
-                .apply();
 
         // 檢查是否已登入
         SharedPreferences loginPrefs = getSharedPreferences("user_prefs", MODE_PRIVATE);
