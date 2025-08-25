@@ -98,8 +98,9 @@ import android.bluetooth.le.ScanCallback;
 import android.bluetooth.le.ScanResult;
 import java.util.UUID;
 
-
-
+import androidx.camera.camera2.interop.Camera2CameraInfo;
+import android.hardware.camera2.CameraCharacteristics;
+import android.util.SizeF;
 
 public class MainActivity extends AppCompatActivity {
     private PreviewView previewView;
@@ -126,9 +127,6 @@ public class MainActivity extends AppCompatActivity {
     private BluetoothGatt bluetoothGatt;
     private final String targetDeviceName = "Mi Smart Band"; // 可改成你實際的裝置名稱
     private static final int REQUEST_BLUETOOTH_PERMISSIONS = 1001;
-
-
-
     private static final Scalar LOWER_RED1 = new Scalar(0, 70, 50);
     private static final Scalar UPPER_RED1 = new Scalar(10, 255, 255);
     private static final Scalar LOWER_RED2 = new Scalar(160, 70, 50);
@@ -137,10 +135,27 @@ public class MainActivity extends AppCompatActivity {
     private static final Scalar UPPER_YELLOW = new Scalar(35, 255, 255);
     private static final Scalar LOWER_GREEN = new Scalar(40, 50, 50);
     private static final Scalar UPPER_GREEN = new Scalar(90, 255, 255);
+    private float fPxY = -1f;
+    private int sensorArrayHeightPx = -1;
+    private float sensorHeightMm = -1f;
+    private float focalMm = -1f;
+    public static final float H_PERSON = 1.65f;
+    public static final float H_TL_LAMP = 0.30f;
+    private float calibScale = 1.0f;
+    private float lastTLHeightPx = -1f;
 
+    private float currentScale = 1f;
+    public float getCurrentScale() { return currentScale; }
+    // 影像座標還原需要用到
+    private float currentDx = 0f, currentDy = 0f;
+    private int lastImageHeightPx = 0;
 
+    // 手機鏡頭離地高度（公尺）— 可微調或做成設定
+    public static final float H_CAMERA = 1.40f;
 
-
+    public float getCurrentDx() { return currentDx; }
+    public float getCurrentDy() { return currentDy; }
+    public int getLastImageHeightPx() { return lastImageHeightPx; }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -396,6 +411,12 @@ public class MainActivity extends AppCompatActivity {
                     analysis.setAnalyzer(ContextCompat.getMainExecutor(this), image -> {
                         Bitmap bitmap = imageToBitmap(image);
                         currentBitmap = bitmap;
+                        lastImageHeightPx = bitmap.getHeight();
+
+                        // 用「實際使用的 bitmap 高度」算 fPxY（確保軸一致）
+                        if (focalMm > 0 && sensorHeightMm > 0 && fPxY <= 0) {
+                            fPxY = (focalMm / sensorHeightMm) * bitmap.getHeight();
+                        }
 
                         List<DetectorMain.Recognition> rawResults =
                                 detector.detect(bitmap, bitmap.getWidth(), bitmap.getHeight());
@@ -411,6 +432,7 @@ public class MainActivity extends AppCompatActivity {
                         for (DetectorMain.Recognition tl : tlFiltered) {
                             String color = detectTrafficLightColor(bitmap, tl.getLocation());
                             tl.setColor(color);
+                            lastTLHeightPx = tl.getLocation().height();
                         }
 
                         float viewW = previewView.getWidth();
@@ -420,6 +442,10 @@ public class MainActivity extends AppCompatActivity {
                         float scale = Math.min(viewW / imgW, viewH / imgH);
                         float dx = (viewW  - imgW * scale) / 2f;
                         float dy = (viewH  - imgH * scale) / 2f;
+
+                        currentScale = scale;
+                        currentDx = dx;
+                        currentDy = dy;
 
                         List<DetectorMain.Recognition> viewResults = new ArrayList<>();
                         for (DetectorMain.Recognition r : rawResults) {
@@ -440,7 +466,26 @@ public class MainActivity extends AppCompatActivity {
                     });
 
                     cameraProvider.unbindAll();
-                    cameraProvider.bindToLifecycle(this, cameraSelector, preview, analysis);
+                    androidx.camera.core.Camera camera =
+                            cameraProvider.bindToLifecycle(this, cameraSelector, preview, analysis);
+
+                    Camera2CameraInfo cam2Info = Camera2CameraInfo.from(camera.getCameraInfo());
+
+                    float[] focals = cam2Info.getCameraCharacteristic(
+                            CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS
+                    );
+                    SizeF sensorSizeMm = cam2Info.getCameraCharacteristic(
+                            CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE
+                    );
+
+                    if (focals != null && focals.length > 0 && sensorSizeMm != null) {
+                        focalMm = focals[0];
+                        sensorHeightMm = sensorSizeMm.getHeight();
+
+                        if (fPxY <= 0 && currentBitmap != null) {
+                            fPxY = (focalMm / sensorHeightMm) * currentBitmap.getHeight();
+                        }
+                    }
 
                 } catch (ExecutionException | InterruptedException e) {
                     Log.e("CameraX", "Camera initialization failed", e);
@@ -530,6 +575,7 @@ public class MainActivity extends AppCompatActivity {
         editor.putInt("sensitivityLevel", sensitivityLevel);
         editor.putBoolean("isVoiceEnabled", isVoiceEnabled);
         editor.putBoolean("isVibrationEnabled", isVibrationEnabled);
+        calibScale = sharedPreferences.getFloat("calibScale", 1.0f);
         editor.apply();
     }
 
@@ -672,8 +718,10 @@ public class MainActivity extends AppCompatActivity {
 
             if (title.contains("person")) {
                 hasPerson = true;
-                float h = loc.height();
-                if (h > 0) personDistance = DISTANCE_SCALING_FACTOR / h;
+                float hView = loc.height();
+                float scale = Math.max(getCurrentScale(), 1e-6f);
+                float hImg  = hView / scale;
+                personDistance = finalizeDistance(estimateDistanceByHeightPx(hImg, H_PERSON));
             }
 
             if (title.contains("crosswalk")) {
@@ -717,12 +765,15 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    float scale = Math.max(getCurrentScale(), 1e-6f);
     private float estimateTrafficLightDistance(List<DetectorMain.Recognition> recognitions) {
         for (DetectorMain.Recognition r : recognitions) {
             if (!"traffic_light".equals(r.getTitle())) continue;
-            float height = r.getLocation().height();
-            if (height <= 0) continue;
-            return DISTANCE_SCALING_FACTOR / height;
+            float hView = r.getLocation().height();
+            float hImg  = hView / scale;
+            if (hImg <= 0) continue;
+            float d = estimateDistanceByHeightPx(hImg, H_TL_LAMP);
+            return finalizeDistance(d);
         }
         return -1f;
     }
@@ -878,8 +929,6 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-
-
     private int getMaxVerticalProjection(Mat binaryMask) {
         int rows = binaryMask.rows();
         int cols = binaryMask.cols();
@@ -944,5 +993,23 @@ public class MainActivity extends AppCompatActivity {
         return inter / (areaA + areaB - inter);
     }
 
+    private float estimateDistanceByHeightPx(float boxHeightPx, float realHeightM) {
+        if (fPxY <= 0 || boxHeightPx <= 0) return -1f;
+        return (realHeightM * fPxY) / boxHeightPx;
+    }
 
+    private float finalizeDistance(float dEst) {
+        if (dEst <= 0) return dEst;
+        return dEst * calibScale;
+    }
+
+    public static float estimateDistanceForHeightPx(float fPxYStatic, float calibScaleStatic, float boxHeightPx, float realHeightM) {
+        if (fPxYStatic <= 0 || boxHeightPx <= 0) return -1f;
+        float d = (realHeightM * fPxYStatic) / boxHeightPx;
+        return d * (calibScaleStatic > 0 ? calibScaleStatic : 1.0f);
+    }
+
+    public float getFPxY() { return fPxY; }
+
+    public float getCalibScale() { return calibScale; }
 }
