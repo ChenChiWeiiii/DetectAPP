@@ -45,46 +45,93 @@ public class OverlayView extends View {
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
 
+        if (!(getContext() instanceof MainActivity)) return;
+        MainActivity act = (MainActivity) getContext();
+        float fPxY = act.getFPxY();
+        float scale = Math.max(act.getCurrentScale(), 1e-6f);
+        float calib = Math.max(act.getCalibScale(), 1e-6f);
+        float dx = act.getCurrentDx();
+        float dy = act.getCurrentDy();
+        int imgH = Math.max(act.getLastImageHeightPx(), 1);
+        float cy = imgH * 0.5f;  // 主點 y 近似影像高度中線
+
         for (DetectorMain.Recognition result : results) {
             RectF box = result.getLocation();
             canvas.drawRect(box, boxPaint);
 
-            // 1) 畫標籤 + 信心度（保持預設文字顏色）
+            // 標籤 + 信心度
             textPaint.setColor(defaultTextColor);
             canvas.drawText(
                     result.getTitle() + " (" + String.format("%.2f", result.getConfidence()) + ")",
-                    box.left,
-                    box.top - 10,
-                    textPaint
+                    box.left, box.top - 10, textPaint
             );
 
-            // 2) 如果是 traffic_light，就用動態文字顏色畫出燈號 + 距離
+            // ===== 紅綠燈：保持你原本（幾何 + 顏色） =====
             if ("traffic_light".equals(result.getTitle())) {
-                float height = box.height();
-                if (height > 0) {
-                    float estimatedDistance = 400.0f / height;
-                    String color = result.getColor();         // red / yellow / green / unknown
-                    // 根據 color 決定文字顏色
-                    int textColor;
-                    switch (color) {
-                        case "red":    textColor = Color.RED;    break;
-                        case "yellow": textColor = Color.YELLOW; break;
-                        case "green":  textColor = Color.GREEN;  break;
-                        default:       textColor = Color.WHITE;  break;
-                    }
-                    textPaint.setColor(textColor);
+                if (fPxY > 0f) {
+                    float hView = box.height();
+                    float hImg  = hView / scale;
 
-                    // 最後畫出「紅綠燈顏色 + 距離」
-                    canvas.drawText(
-                            String.format("%s  %.1f m", color, estimatedDistance),
-                            box.left,
-                            box.bottom + 40,
-                            textPaint
+                    float d = MainActivity.estimateDistanceForHeightPx(
+                            fPxY, calib, hImg, MainActivity.H_TL_LAMP
                     );
-                    // 畫完之後重置回預設顏色，以免影響下一個標籤
+
+                    String color = result.getColor();
+                    int textColor = Color.WHITE;
+                    if ("red".equals(color)) textColor = Color.RED;
+                    else if ("yellow".equals(color)) textColor = Color.YELLOW;
+                    else if ("green".equals(color)) textColor = Color.GREEN;
+
+                    textPaint.setColor(textColor);
+                    canvas.drawText(
+                            String.format("%s 距離： %.1f m", color, d > 0 ? d : 0f),
+                            box.left, box.bottom + 40, textPaint
+                    );
+                    textPaint.setColor(defaultTextColor);
+                }
+            }
+
+            // ===== 行人：幾何（以人高 H_PERSON） =====
+            if (result.getTitle() != null && result.getTitle().toLowerCase().contains("person")) {
+                if (fPxY > 0f) {
+                    float hView = box.height();
+                    float hImg  = hView / scale;
+
+                    float d = MainActivity.estimateDistanceForHeightPx(
+                            fPxY, calib, hImg, MainActivity.H_PERSON
+                    );
+
+                    // 顏色：青色（或白色）
+                    textPaint.setColor(Color.CYAN);
+                    canvas.drawText(
+                            String.format("距離：  %.1f m", d > 0 ? d : 0f),
+                            box.left, box.bottom + 40, textPaint
+                    );
+                    textPaint.setColor(defaultTextColor);
+                }
+            }
+
+            // ===== 斑馬線：地平面幾何（用框底 y） =====
+            if (result.getTitle() != null && result.getTitle().toLowerCase().contains("crosswalk")) {
+                if (fPxY > 0f) {
+                    // 把 view 座標還原成影像座標：y_img = (y_view - dy) / scale
+                    float yBottomView = box.bottom;
+                    float yBottomImg  = (yBottomView - dy) / scale;
+
+                    // d ≈ (H_CAMERA * fPy) / (y_img_bottom - c_y) ；需 y_img_bottom > c_y
+                    float denom = (yBottomImg - cy);
+                    float d = (denom > 1f) ? (MainActivity.H_CAMERA * fPxY / denom) : -1f;
+                    if (d > 0) d *= calib; // 套校準比例
+
+                    textPaint.setColor(Color.WHITE);
+                    canvas.drawText(
+                            String.format("距離：  %.1f m", d > 0 ? d : 0f),
+                            box.left, box.bottom + 40, textPaint
+                    );
                     textPaint.setColor(defaultTextColor);
                 }
             }
         }
     }
 }
+

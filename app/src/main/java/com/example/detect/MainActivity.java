@@ -43,18 +43,11 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
 import androidx.core.content.ContextCompat;
-import android.util.Rational;
-import androidx.camera.core.ViewPort;
-import androidx.camera.core.UseCaseGroup;
-
-
 
 import com.example.detect.model.ReminderRequest;
 import com.example.detect.model.SensitivityRequest;
 import com.google.common.util.concurrent.ListenableFuture;
 
-import java.util.Map;
-import java.util.HashMap;
 import java.nio.ByteBuffer;
 import java.io.IOException;
 import java.util.Arrays;
@@ -90,10 +83,6 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import org.opencv.android.OpenCVLoader;
 
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import android.os.Handler;
-import android.os.Looper;
 
 
 import android.bluetooth.BluetoothAdapter;
@@ -138,35 +127,6 @@ public class MainActivity extends AppCompatActivity {
     private final String targetDeviceName = "Mi Smart Band"; // 可改成你實際的裝置名稱
     private static final int REQUEST_BLUETOOTH_PERMISSIONS = 1001;
 
-    private androidx.camera.core.Camera camera;
-
-    // ---- Long-distance TL tuning ----
-    private static final float INITIAL_ZOOM = 1.8f;   // 綁定相機後套用的預設變焦
-    private static final int   TARGET_W     = 1920;   // 影像分析輸入寬
-    private static final int   TARGET_H     = 1080;   // 影像分析輸入高
-
-    private static final float TL_CONF   = 0.20f;     // 交通號誌專屬信心門檻（遠距離小物件通常較低）
-    private static final float IOU_NMS   = 0.50f;     // NMS IoU
-    private static final int   MIN_BOX_PX = 6;        // 最小框像素，避免噪聲
-
-    // 平鋪推論（不換模型也能增距）
-    private static final int TILE_COLS = 2;           // 先用 2×2；效能足夠再升 3×3
-    private static final int TILE_ROWS = 2;
-    private static final int TILE_OVERLAP = 40;       // 邊緣重疊，避免切到一半
-
-    // 多幀投票（讓顏色更穩）
-    private int frameIndex = 0;                       // 逐幀累加
-    private static final int TRACK_TTL = 10;          // 追蹤幀數存活
-
-    private static class TLTrack {
-        RectF box;
-        int seenFrame;
-        int[] votes = new int[4]; // 0=UNK,1=RED,2=YELLOW,3=GREEN
-    }
-    private final List<TLTrack> tlTracks = new ArrayList<>();
-
-    private ExecutorService cameraExecutor;
-    private Handler ui;
 
 
     private static final Scalar LOWER_RED1 = new Scalar(0, 70, 50);
@@ -185,8 +145,6 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        cameraExecutor = Executors.newSingleThreadExecutor();
-        ui = new Handler(Looper.getMainLooper());
 
         if (!OpenCVLoader.initDebug()) {
             Log.e("OpenCV", "Unable to load OpenCV");
@@ -415,7 +373,6 @@ public class MainActivity extends AppCompatActivity {
                     Preview preview = new Preview.Builder().build();
                     previewView.setImplementationMode(PreviewView.ImplementationMode.COMPATIBLE);
                     previewView.setScaleType(PreviewView.ScaleType.FIT_CENTER);
-                    previewView.setImplementationMode(PreviewView.ImplementationMode.PERFORMANCE);
 
                     // 安全取得旋轉
                     Display display = previewView.getDisplay();
@@ -431,94 +388,59 @@ public class MainActivity extends AppCompatActivity {
 
                     // 3. ImageAnalysis 設定
                     ImageAnalysis analysis = new ImageAnalysis.Builder()
-                            .setTargetResolution(new android.util.Size(1920, 1080)) // ★提升像素密度
                             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                             .build();
                     analysis.setTargetRotation(rotation);
-                    // ★ 讓 Preview & Analysis 共用同一個 ViewPort（裁切/比例一致）
-                    androidx.camera.core.ViewPort vp =
-                            new androidx.camera.core.ViewPort.Builder(
-                                    new android.util.Rational(previewView.getWidth(), previewView.getHeight()),
-                                    rotation // 用你前面已算好的 rotation
-                            )
-                                    //.setScaleType(androidx.camera.core.ViewPort.ScaleType.FIT) // 對齊 PreviewView 的 FIT_CENTER 顯示
-                                    .build();
-
-                    androidx.camera.core.UseCaseGroup ucg =
-                            new androidx.camera.core.UseCaseGroup.Builder()
-                                    .addUseCase(preview)   // 用你前面已建立的 preview
-                                    .addUseCase(analysis)  // 用你前面已建立的 analysis
-                                    .setViewPort(vp)
-                                    .build();
-
-                    cameraProvider.unbindAll();
-                    camera = cameraProvider.bindToLifecycle(this, cameraSelector, ucg);
-
 
                     // 4. 設定 Analyzer
-                    analysis.setAnalyzer(cameraExecutor, image -> {
-                        frameIndex++;
+                    analysis.setAnalyzer(ContextCompat.getMainExecutor(this), image -> {
                         Bitmap bitmap = imageToBitmap(image);
                         currentBitmap = bitmap;
 
-                        // 1) 平鋪推論：把畫面切 2×2 跑 YOLO，再映回原圖座標
-                        List<DetectorMain.Recognition> detAll = detectTiled(bitmap, TILE_COLS, TILE_ROWS, TILE_OVERLAP);
+                        List<DetectorMain.Recognition> rawResults =
+                                detector.detect(bitmap, bitmap.getWidth(), bitmap.getHeight());
 
-                        // 2) 交通號誌專屬門檻 + 最小框像素，其他類別照舊
-                        List<DetectorMain.Recognition> filtered = new ArrayList<>();
-                        for (DetectorMain.Recognition r : detAll) {
+                        List<DetectorMain.Recognition> tlResults = new ArrayList<>();
+                        for (DetectorMain.Recognition r : rawResults) {
                             if ("traffic_light".equals(r.getTitle())) {
-                                if (r.getConfidence() >= TL_CONF &&
-                                        Math.min(r.getLocation().width(), r.getLocation().height()) >= MIN_BOX_PX) {
-                                    filtered.add(r);
-                                }
-                            } else {
-                                filtered.add(r);
+                                tlResults.add(r);
                             }
                         }
 
-                        // 3) 以「類別」分組做一次 NMS，避免 tile 之間重複
-                        List<DetectorMain.Recognition> kept = nmsByClass(filtered, IOU_NMS);
-
-                        // 4) 只對交通號誌做顏色判斷 + 多幀投票穩定輸出
-                        for (DetectorMain.Recognition r : kept) {
-                            if ("traffic_light".equals(r.getTitle())) {
-                                String c = detectTrafficLightColor(bitmap, r.getLocation()); // 你原本的 OpenCV 法
-                                c = voteColorOverFrames(r.getLocation(), c);                 // 多幀投票
-                                r.setColor(c);
-                            }
+                        List<DetectorMain.Recognition> tlFiltered = nonMaxSuppression(tlResults, 0.5f);
+                        for (DetectorMain.Recognition tl : tlFiltered) {
+                            String color = detectTrafficLightColor(bitmap, tl.getLocation());
+                            tl.setColor(color);
                         }
 
-                        // 5) 映射到畫面座標後再更新 UI 與邏輯
                         float viewW = previewView.getWidth();
                         float viewH = previewView.getHeight();
-                        List<DetectorMain.Recognition> viewResults =
-                                mapToViewCoordinates(kept, viewW, viewH, bitmap.getWidth(), bitmap.getHeight());
+                        float imgW  = bitmap.getWidth();
+                        float imgH  = bitmap.getHeight();
+                        float scale = Math.min(viewW / imgW, viewH / imgH);
+                        float dx = (viewW  - imgW * scale) / 2f;
+                        float dy = (viewH  - imgH * scale) / 2f;
+
+                        List<DetectorMain.Recognition> viewResults = new ArrayList<>();
+                        for (DetectorMain.Recognition r : rawResults) {
+                            RectF rawBox = r.getLocation();
+                            RectF viewBox = new RectF(
+                                    rawBox.left   * scale + dx,
+                                    rawBox.top    * scale + dy,
+                                    rawBox.right  * scale + dx,
+                                    rawBox.bottom * scale + dy
+                            );
+                            r.setLocation(viewBox);
+                            viewResults.add(r);
+                        }
 
                         overlayView.setResults(viewResults);
                         processPedestrianLogic(viewResults);
                         image.close();
                     });
 
-                   // cameraProvider.unbindAll();
-                    //cameraProvider.bindToLifecycle(this, cameraSelector, preview, analysis);
-                    // ★ 讓 Preview & Analysis 共用同一個 ViewPort（裁切/比例一致）
-                    android.util.Rational aspect = new android.util.Rational(previewView.getWidth(), previewView.getHeight());
-                    androidx.camera.core.ViewPort viewPort =
-                            new androidx.camera.core.ViewPort.Builder(aspect, rotation)
-                                    //.setScaleType(androidx.camera.core.ViewPort.ScaleType.FIT) // 不是 FIT_CENTER
-                                    .build();
-
-                    androidx.camera.core.UseCaseGroup useCaseGroup =
-                            new androidx.camera.core.UseCaseGroup.Builder()
-                                    .addUseCase(preview)
-                                    .addUseCase(analysis)
-                                    .setViewPort(viewPort)
-                                    .build();
-
                     cameraProvider.unbindAll();
-                    camera = cameraProvider.bindToLifecycle(this, cameraSelector, useCaseGroup);
-
+                    cameraProvider.bindToLifecycle(this, cameraSelector, preview, analysis);
 
                 } catch (ExecutionException | InterruptedException e) {
                     Log.e("CameraX", "Camera initialization failed", e);
@@ -546,23 +468,14 @@ public class MainActivity extends AppCompatActivity {
         vBuffer.get(nv21, ySize, vSize);
         uBuffer.get(nv21, ySize + vSize, uSize);
 
-//        android.graphics.Rect crop = image.getCropRect();
-//
-//        YuvImage yuv = new YuvImage(nv21, ImageFormat.NV21,
-//                image.getWidth(), image.getHeight(), null);
-//        ByteArrayOutputStream out = new ByteArrayOutputStream();
-//        yuv.compressToJpeg(
-//                new android.graphics.Rect(0, 0, image.getWidth(), image.getHeight()),
-//                100,
-//                out
-//        );
-
-        android.graphics.Rect crop = image.getCropRect();
-
-        YuvImage yuv = new YuvImage(nv21, ImageFormat.NV21, image.getWidth(), image.getHeight(), null);
+        YuvImage yuv = new YuvImage(nv21, ImageFormat.NV21,
+                image.getWidth(), image.getHeight(), null);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
-
-        yuv.compressToJpeg(crop, 100, out);
+        yuv.compressToJpeg(
+                new android.graphics.Rect(0, 0, image.getWidth(), image.getHeight()),
+                100,
+                out
+        );
 
         byte[] jpeg = out.toByteArray();
         Bitmap raw = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length);
@@ -992,9 +905,6 @@ public class MainActivity extends AppCompatActivity {
             textToSpeech.stop();
             textToSpeech.shutdown();
         }
-        if (cameraExecutor != null && !cameraExecutor.isShutdown()) {
-            cameraExecutor.shutdown();
-        }
         super.onDestroy();
     }
 
@@ -1033,139 +943,6 @@ public class MainActivity extends AppCompatActivity {
         float areaB  = (b.right - b.left) * (b.bottom - b.top);
         return inter / (areaA + areaB - inter);
     }
-
-    private List<DetectorMain.Recognition> detectTiled(Bitmap src, int cols, int rows, int overlap) {
-        int W = src.getWidth(), H = src.getHeight();
-        int tileW = W / cols, tileH = H / rows;
-        List<DetectorMain.Recognition> all = new ArrayList<>();
-
-        for (int r = 0; r < rows; r++) {
-            for (int c = 0; c < cols; c++) {
-                int x0 = Math.max(0, c * tileW - overlap);
-                int y0 = Math.max(0, r * tileH - overlap);
-                int x1 = Math.min(W, (c + 1) * tileW + overlap);
-                int y1 = Math.min(H, (r + 1) * tileH + overlap);
-                int w = x1 - x0, h = y1 - y0;
-                if (w <= 0 || h <= 0) continue;
-
-                Bitmap tile = Bitmap.createBitmap(src, x0, y0, w, h);
-                List<DetectorMain.Recognition> part = detector.detect(tile, w, h);
-
-                for (DetectorMain.Recognition rec : part) {
-                    RectF b = new RectF(rec.getLocation());
-                    b.offset(x0, y0);           // 映回原圖
-                    rec.setLocation(b);
-                    all.add(rec);
-                }
-            }
-        }
-        return nmsByClass(all, IOU_NMS);
-    }
-
-    private List<DetectorMain.Recognition> nmsByClass(
-            List<DetectorMain.Recognition> list, float iouTh) {
-
-        Map<String, List<DetectorMain.Recognition>> by = new HashMap<>();
-
-        for (DetectorMain.Recognition r : list) {
-            List<DetectorMain.Recognition> grp = by.get(r.getTitle());
-            if (grp == null) {
-                grp = new ArrayList<>();
-                by.put(r.getTitle(), grp);
-            }
-            grp.add(r);
-        }
-
-        List<DetectorMain.Recognition> out = new ArrayList<>();
-        for (List<DetectorMain.Recognition> grp : by.values()) {
-            out.addAll(nonMaxSuppression(grp, iouTh)); // 你原本的 NMS
-        }
-        return out;
-    }
-
-
-    private List<DetectorMain.Recognition> mapToViewCoordinates(
-            List<DetectorMain.Recognition> imageResults,
-            float viewW, float viewH, float imgW, float imgH) {
-        float scale = Math.min(viewW / imgW, viewH / imgH);
-        float dx = (viewW - imgW * scale) / 2f;
-        float dy = (viewH - imgH * scale) / 2f;
-
-        List<DetectorMain.Recognition> out = new ArrayList<>();
-        for (DetectorMain.Recognition r : imageResults) {
-            RectF b = r.getLocation();
-            RectF vb = new RectF(
-                    b.left * scale + dx, b.top * scale + dy,
-                    b.right * scale + dx, b.bottom * scale + dy
-            );
-            r.setLocation(vb);
-            out.add(r);
-        }
-        return out;
-    }
-
-    private int colorIdx(String c) {
-        if ("red".equals(c)) return 1;
-        if ("yellow".equals(c)) return 2;
-        if ("green".equals(c)) return 3;
-        return 0;
-    }
-    private String colorStr(int idx) {
-        switch (idx) {
-            case 1: return "red";
-            case 2: return "yellow";
-            case 3: return "green";
-            default: return "unknown";
-        }
-    }
-    private float iou(RectF a, RectF b) {
-        float left = Math.max(a.left, b.left);
-        float top = Math.max(a.top, b.top);
-        float right = Math.min(a.right, b.right);
-        float bottom = Math.min(a.bottom, b.bottom);
-        float interW = Math.max(0f, right - left);
-        float interH = Math.max(0f, bottom - top);
-        float inter = interW * interH;
-        float areaA = Math.max(0f, a.width()) * Math.max(0f, a.height());
-        float areaB = Math.max(0f, b.width()) * Math.max(0f, b.height());
-        float denom = areaA + areaB - inter;
-        return denom > 0 ? inter / denom : 0f;
-    }
-
-    private String voteColorOverFrames(RectF box, String current) {
-        // 清掉太久沒看到的 track（避免 Iterator import）
-        for (int i = tlTracks.size() - 1; i >= 0; i--) {
-            if (frameIndex - tlTracks.get(i).seenFrame > TRACK_TTL) {
-                tlTracks.remove(i);
-            }
-        }
-
-        TLTrack best = null; float bestIou = 0f;
-        for (TLTrack t : tlTracks) {
-            float iouVal = iou(t.box, box);
-            if (iouVal > 0.5f && iouVal > bestIou) { best = t; bestIou = iouVal; }
-        }
-        if (best == null) {
-            best = new TLTrack();
-            best.box = new RectF(box);
-            best.seenFrame = frameIndex;
-            best.votes = new int[4];
-            tlTracks.add(best);
-        }
-
-        best.seenFrame = frameIndex;
-        best.box = new RectF(box);
-
-        int idx = colorIdx(current);
-        if (idx != 0) best.votes[idx]++;
-
-        int argmax = 0, maxv = -1;
-        for (int k = 1; k <= 3; k++) {
-            if (best.votes[k] > maxv) { maxv = best.votes[k]; argmax = k; }
-        }
-        return (maxv <= 0) ? current : colorStr(argmax);
-    }
-
 
 
 }
