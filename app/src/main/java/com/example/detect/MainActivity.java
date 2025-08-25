@@ -101,7 +101,10 @@ import java.util.UUID;
 import androidx.camera.camera2.interop.Camera2CameraInfo;
 import android.hardware.camera2.CameraCharacteristics;
 import android.util.SizeF;
+import androidx.annotation.OptIn;
+import androidx.camera.camera2.interop.ExperimentalCamera2Interop;
 
+@OptIn(markerClass = ExperimentalCamera2Interop.class)
 public class MainActivity extends AppCompatActivity {
     private PreviewView previewView;
     private OverlayView overlayView;
@@ -300,9 +303,6 @@ public class MainActivity extends AppCompatActivity {
                     BluetoothGattCharacteristic vibrationChar = service.getCharacteristic(vibrationCharUUID);
                     if (vibrationChar != null &&
                             ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
-                        vibrationChar.setValue(new byte[]{0x01});
-                        boolean success = gatt.writeCharacteristic(vibrationChar);
-                        Log.d("MiBand", "試圖震動小米手環：" + success);
                     } else {
                         Log.d("MiBand", "找不到震動特徵值");
                     }
@@ -310,8 +310,6 @@ public class MainActivity extends AppCompatActivity {
                     Log.w("MiBand", "找不到震動服務");
                 }
 
-                // 🔽 額外呼叫你自訂的震動方法（可選）
-                triggerMiBandVibration();
             }
         });
 
@@ -779,22 +777,12 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void triggerVibrationOnce(String tag) {
+        if(!isVibrationEnabled) return;
         long now = System.currentTimeMillis();
         if (now - lastVibrationTime < REMINDER_COOLDOWN_MS) return;
-
-        if (isVibrationEnabled) {
-            Vibrator vibrator = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                vibrator.vibrate(VibrationEffect.createOneShot(500, VibrationEffect.DEFAULT_AMPLITUDE));
-            } else {
-                vibrator.vibrate(500);
-            }
-            triggerMiBandVibration();
-            lastVibrationTime = now;
-            Log.d("提醒", "觸發提醒: " + tag);
-        }
+        triggerMiBandVibration(); lastVibrationTime = now;
+        Log.d("提醒", "觸發提醒: " + tag);
     }
-
     private void speakOnce(String message) {
         if (!isVoiceEnabled) return;
 
