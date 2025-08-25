@@ -44,9 +44,9 @@ import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
 import androidx.core.content.ContextCompat;
 
+import com.google.common.util.concurrent.ListenableFuture;
 import com.example.detect.model.ReminderRequest;
 import com.example.detect.model.SensitivityRequest;
-import com.google.common.util.concurrent.ListenableFuture;
 
 import java.nio.ByteBuffer;
 import java.io.IOException;
@@ -64,7 +64,6 @@ import retrofit2.Response;
 import android.graphics.ImageFormat;
 
 import android.graphics.YuvImage;
-import android.Manifest;
 
 import org.opencv.core.Size;
 import org.opencv.android.Utils;
@@ -83,10 +82,6 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import org.opencv.android.OpenCVLoader;
 
-
-
-import android.bluetooth.BluetoothAdapter;
-import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothGattCallback;
 import android.bluetooth.BluetoothGattCharacteristic;
@@ -98,9 +93,13 @@ import android.bluetooth.le.ScanCallback;
 import android.bluetooth.le.ScanResult;
 import java.util.UUID;
 
+import androidx.camera.camera2.interop.Camera2CameraInfo;
+import android.hardware.camera2.CameraCharacteristics;
+import android.util.SizeF;
+import androidx.annotation.OptIn;
+import androidx.camera.camera2.interop.ExperimentalCamera2Interop;
 
-
-
+@OptIn(markerClass = ExperimentalCamera2Interop.class)
 public class MainActivity extends AppCompatActivity {
     private PreviewView previewView;
     private OverlayView overlayView;
@@ -127,8 +126,6 @@ public class MainActivity extends AppCompatActivity {
     private final String targetDeviceName = "Mi Smart Band"; // 可改成你實際的裝置名稱
     private static final int REQUEST_BLUETOOTH_PERMISSIONS = 1001;
 
-
-
     private static final Scalar LOWER_RED1 = new Scalar(0, 70, 50);
     private static final Scalar UPPER_RED1 = new Scalar(10, 255, 255);
     private static final Scalar LOWER_RED2 = new Scalar(160, 70, 50);
@@ -138,9 +135,27 @@ public class MainActivity extends AppCompatActivity {
     private static final Scalar LOWER_GREEN = new Scalar(40, 50, 50);
     private static final Scalar UPPER_GREEN = new Scalar(90, 255, 255);
 
+    private float fPxY = -1f;
+    private int sensorArrayHeightPx = -1;
+    private float sensorHeightMm = -1f;
+    private float focalMm = -1f;
+    public static final float H_PERSON = 1.65f;
+    public static final float H_TL_LAMP = 0.30f;
+    private float calibScale = 1.0f;
+    private float lastTLHeightPx = -1f;
 
+    private float currentScale = 1f;
+    public float getCurrentScale() { return currentScale; }
+    // 影像座標還原需要用到
+    private float currentDx = 0f, currentDy = 0f;
+    private int lastImageHeightPx = 0;
 
+    // 手機鏡頭離地高度（公尺）— 可微調或做成設定
+    public static final float H_CAMERA = 1.40f;
 
+    public float getCurrentDx() { return currentDx; }
+    public float getCurrentDy() { return currentDy; }
+    public int getLastImageHeightPx() { return lastImageHeightPx; }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -212,6 +227,7 @@ public class MainActivity extends AppCompatActivity {
         createNotificationChannel();
         findViewById(R.id.btnSettings).setOnClickListener(v -> showSettingsDialog());
     }
+
     //加入藍芽權限請求
     private void requestBluetoothPermissions() {
         Log.d("MiBand", "準備請求藍牙權限");
@@ -226,6 +242,7 @@ public class MainActivity extends AppCompatActivity {
             scanAndConnectMiBand();  // 如果低版本可以直接掃描
         }
     }
+
     //掃描並連線手環
     private void scanAndConnectMiBand() {
         Log.d("MiBand", "執行 scanAndConnectMiBand()");
@@ -253,6 +270,7 @@ public class MainActivity extends AppCompatActivity {
             }
         });
     }
+
     //連線與震動功能
     private void connectToMiBand(BluetoothDevice device) {
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
@@ -295,8 +313,6 @@ public class MainActivity extends AppCompatActivity {
                     Log.w("MiBand", "找不到震動服務");
                 }
 
-                // 🔽 額外呼叫你自訂的震動方法（可選）
-                triggerMiBandVibration();
             }
         });
 
@@ -327,7 +343,6 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-
     private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel channel = new NotificationChannel(
@@ -341,6 +356,7 @@ public class MainActivity extends AppCompatActivity {
             notificationManager.createNotificationChannel(channel);
         }
     }
+
     private void sendAlertNotification(String title, String content) {
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, "alert_channel")
                 .setSmallIcon(R.drawable.ic_launcher_foreground) // 替換成你自己的 icon
@@ -396,6 +412,12 @@ public class MainActivity extends AppCompatActivity {
                     analysis.setAnalyzer(ContextCompat.getMainExecutor(this), image -> {
                         Bitmap bitmap = imageToBitmap(image);
                         currentBitmap = bitmap;
+                        lastImageHeightPx = bitmap.getHeight();
+
+                        // 用「實際使用的 bitmap 高度」算 fPxY（確保軸一致）
+                        if (focalMm > 0 && sensorHeightMm > 0 && fPxY <= 0) {
+                            fPxY = (focalMm / sensorHeightMm) * bitmap.getHeight();
+                        }
 
                         List<DetectorMain.Recognition> rawResults =
                                 detector.detect(bitmap, bitmap.getWidth(), bitmap.getHeight());
@@ -411,6 +433,7 @@ public class MainActivity extends AppCompatActivity {
                         for (DetectorMain.Recognition tl : tlFiltered) {
                             String color = detectTrafficLightColor(bitmap, tl.getLocation());
                             tl.setColor(color);
+                            lastTLHeightPx = tl.getLocation().height();
                         }
 
                         float viewW = previewView.getWidth();
@@ -420,6 +443,10 @@ public class MainActivity extends AppCompatActivity {
                         float scale = Math.min(viewW / imgW, viewH / imgH);
                         float dx = (viewW  - imgW * scale) / 2f;
                         float dy = (viewH  - imgH * scale) / 2f;
+
+                        currentScale = scale;
+                        currentDx = dx;
+                        currentDy = dy;
 
                         List<DetectorMain.Recognition> viewResults = new ArrayList<>();
                         for (DetectorMain.Recognition r : rawResults) {
@@ -440,7 +467,26 @@ public class MainActivity extends AppCompatActivity {
                     });
 
                     cameraProvider.unbindAll();
-                    cameraProvider.bindToLifecycle(this, cameraSelector, preview, analysis);
+                    androidx.camera.core.Camera camera =
+                            cameraProvider.bindToLifecycle(this, cameraSelector, preview, analysis);
+
+                    Camera2CameraInfo cam2Info = Camera2CameraInfo.from(camera.getCameraInfo());
+
+                    float[] focals = cam2Info.getCameraCharacteristic(
+                            CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS
+                    );
+                    SizeF sensorSizeMm = cam2Info.getCameraCharacteristic(
+                            CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE
+                    );
+
+                    if (focals != null && focals.length > 0 && sensorSizeMm != null) {
+                        focalMm = focals[0];
+                        sensorHeightMm = sensorSizeMm.getHeight();
+
+                        if (fPxY <= 0 && currentBitmap != null) {
+                            fPxY = (focalMm / sensorHeightMm) * currentBitmap.getHeight();
+                        }
+                    }
 
                 } catch (ExecutionException | InterruptedException e) {
                     Log.e("CameraX", "Camera initialization failed", e);
@@ -448,7 +494,6 @@ public class MainActivity extends AppCompatActivity {
             }, ContextCompat.getMainExecutor(this));
         });
     }
-
 
     private Bitmap imageToBitmap(ImageProxy image) {
         // 1. 先拿到旋轉角度
@@ -490,8 +535,6 @@ public class MainActivity extends AppCompatActivity {
         return rotated;
     }
 
-
-
     private void startLocationUpdates() {
         locationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
         try {
@@ -523,6 +566,7 @@ public class MainActivity extends AppCompatActivity {
         sensitivityLevel = sharedPreferences.getInt("sensitivityLevel", 2);
         isVoiceEnabled = sharedPreferences.getBoolean("isVoiceEnabled", true);
         isVibrationEnabled = sharedPreferences.getBoolean("isVibrationEnabled", true);
+        calibScale = sharedPreferences.getFloat("calibScale", 1.0f);
     }
 
     private void saveSettingsToPreferences() {
@@ -530,6 +574,7 @@ public class MainActivity extends AppCompatActivity {
         editor.putInt("sensitivityLevel", sensitivityLevel);
         editor.putBoolean("isVoiceEnabled", isVoiceEnabled);
         editor.putBoolean("isVibrationEnabled", isVibrationEnabled);
+        editor.putFloat("calibScale", calibScale);
         editor.apply();
     }
 
@@ -576,7 +621,8 @@ public class MainActivity extends AppCompatActivity {
 
             ApiService apiService = RetrofitClient.getInstance().create(ApiService.class);
             SensitivityRequest sensitivityRequest = new SensitivityRequest(userId, sensitivityLevel);
-            ReminderRequest reminderRequest = new ReminderRequest(userId,
+            ReminderRequest reminderRequest = new ReminderRequest(
+                    userId,
                     isVoiceEnabled ? 1 : 0,
                     isVibrationEnabled ? 1 : 0);
 
@@ -672,8 +718,10 @@ public class MainActivity extends AppCompatActivity {
 
             if (title.contains("person")) {
                 hasPerson = true;
-                float h = loc.height();
-                if (h > 0) personDistance = DISTANCE_SCALING_FACTOR / h;
+                float hView = loc.height();
+                float scale = Math.max(getCurrentScale(), 1e-6f);
+                float hImg  = hView / scale;
+                personDistance = finalizeDistance(estimateDistanceByHeightPx(hImg, H_PERSON));
             }
 
             if (title.contains("crosswalk")) {
@@ -718,30 +766,26 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private float estimateTrafficLightDistance(List<DetectorMain.Recognition> recognitions) {
+        float scale = Math.max(getCurrentScale(), 1e-6f);
         for (DetectorMain.Recognition r : recognitions) {
             if (!"traffic_light".equals(r.getTitle())) continue;
-            float height = r.getLocation().height();
-            if (height <= 0) continue;
-            return DISTANCE_SCALING_FACTOR / height;
+            float hView = r.getLocation().height();
+            float hImg  = hView / scale;
+            if (hImg <= 0) continue;
+            float d = estimateDistanceByHeightPx(hImg, H_TL_LAMP);
+            return finalizeDistance(d);
         }
         return -1f;
     }
 
     private void triggerVibrationOnce(String tag) {
+        if(!isVibrationEnabled) return;
         long now = System.currentTimeMillis();
         if (now - lastVibrationTime < REMINDER_COOLDOWN_MS) return;
 
-        if (isVibrationEnabled) {
-            Vibrator vibrator = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                vibrator.vibrate(VibrationEffect.createOneShot(500, VibrationEffect.DEFAULT_AMPLITUDE));
-            } else {
-                vibrator.vibrate(500);
-            }
-            triggerMiBandVibration();
-            lastVibrationTime = now;
-            Log.d("提醒", "觸發提醒: " + tag);
-        }
+        triggerMiBandVibration();
+        lastVibrationTime = now;
+        Log.d("提醒", "觸發提醒: " + tag);
     }
 
     private void speakOnce(String message) {
@@ -756,8 +800,6 @@ public class MainActivity extends AppCompatActivity {
             Log.d("提醒", "播放語音：" + message);
         }
     }
-
-
 
     private String detectTrafficLightColor(Bitmap fullBmp, RectF rawBox) {
         Mat mat       = new Mat();
@@ -878,8 +920,6 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-
-
     private int getMaxVerticalProjection(Mat binaryMask) {
         int rows = binaryMask.rows();
         int cols = binaryMask.cols();
@@ -944,5 +984,25 @@ public class MainActivity extends AppCompatActivity {
         return inter / (areaA + areaB - inter);
     }
 
+    private float estimateDistanceByHeightPx(float boxHeightPx, float realHeightM) {
+        if (fPxY <= 0 || boxHeightPx <= 0) return -1f;
+        return (realHeightM * fPxY) / boxHeightPx;
+    }
+
+    private float finalizeDistance(float dEst) {
+        if (dEst <= 0) return dEst;
+        return dEst * calibScale;
+    }
+
+    public static float estimateDistanceForHeightPx(float fPxYStatic, float calibScaleStatic, float boxHeightPx, float realHeightM) {
+        if (fPxYStatic <= 0 || boxHeightPx <= 0) return -1f;
+        float d = (realHeightM * fPxYStatic) / boxHeightPx;
+        return d * (calibScaleStatic > 0 ? calibScaleStatic : 1.0f);
+    }
+
+    public float getFPxY() { return fPxY; }
+
+    public float getCalibScale() { return calibScale; }
 
 }
+
