@@ -43,11 +43,17 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
 import androidx.core.content.ContextCompat;
+import android.util.Rational;
+import androidx.camera.core.ViewPort;
+import androidx.camera.core.UseCaseGroup;
+
 
 import com.example.detect.model.ReminderRequest;
 import com.example.detect.model.SensitivityRequest;
 import com.google.common.util.concurrent.ListenableFuture;
 
+import java.util.Map;
+import java.util.HashMap;
 import java.nio.ByteBuffer;
 import java.io.IOException;
 import java.util.Arrays;
@@ -83,26 +89,26 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import org.opencv.android.OpenCVLoader;
 
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import android.os.Handler;
+import android.os.Looper;
 
-
-import android.bluetooth.BluetoothAdapter;
-import android.bluetooth.BluetoothDevice;
+import android.annotation.SuppressLint;
 import android.bluetooth.BluetoothGatt;
-import android.bluetooth.BluetoothGattCallback;
 import android.bluetooth.BluetoothGattCharacteristic;
-import android.bluetooth.BluetoothGattService;
 import android.bluetooth.BluetoothManager;
-import android.bluetooth.BluetoothProfile;
 import android.bluetooth.le.BluetoothLeScanner;
-import android.bluetooth.le.ScanCallback;
-import android.bluetooth.le.ScanResult;
-import java.util.UUID;
+
 
 import androidx.camera.camera2.interop.Camera2CameraInfo;
 import android.hardware.camera2.CameraCharacteristics;
 import android.util.SizeF;
 import androidx.annotation.OptIn;
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop;
+import android.media.AudioAttributes;
+import android.net.Uri;
+import android.provider.Settings;
 
 @OptIn(markerClass = ExperimentalCamera2Interop.class)
 public class MainActivity extends AppCompatActivity {
@@ -130,6 +136,53 @@ public class MainActivity extends AppCompatActivity {
     private BluetoothGatt bluetoothGatt;
     private final String targetDeviceName = "Mi Smart Band"; // 可改成你實際的裝置名稱
     private static final int REQUEST_BLUETOOTH_PERMISSIONS = 1001;
+
+    private androidx.camera.core.Camera camera;
+
+    // ---- Long-distance TL tuning ----
+    private static final float INITIAL_ZOOM = 1.8f;   // 綁定相機後套用的預設變焦
+    private static final int   TARGET_W     = 1920;   // 影像分析輸入寬
+    private static final int   TARGET_H     = 1080;   // 影像分析輸入高
+
+    private static final float TL_CONF   = 0.28f;     // 交通號誌專屬信心門檻（遠距離小物件通常較低）
+    private static final float IOU_NMS   = 0.80f;     // NMS IoU
+    private static final int   MIN_BOX_PX = 8;        // 最小框像素，避免噪聲
+    // 顏色判斷穩定化
+    private static final float  TL_ROI_INSET    = 0.08f;   // 裁一圈，避開邊框/反光（15%）
+    private static final double TL_MIN_RATIO    = 0.03;    // 原本 0.06 → 0.03
+    private static final double TL_MIN_GAP      = 0.015;   // 原本 0.025 → 0.015
+    private static final int    TL_MIN_TOTALPX  = 6;       // 原本 12 → 6
+
+    // 追蹤/投票去抖
+    private static final float  TRACK_IOU_MATCH = 0.30f;   // 降低到 0.3，比較容易續上同一盞燈
+    private static final int    COLOR_CONFIRM_FRAMES = 3;  // 變色需連續 N 幀
+    private static final int    COLOR_HOLD_FRAMES    = 8;  // 確認後至少維持 M 幀
+
+    // 平鋪推論（不換模型也能增距）
+    private static final int TILE_COLS = 2;           // 先用 2×2；效能足夠再升 3×3
+    private static final int TILE_ROWS = 2;
+    private static final int TILE_OVERLAP = 40;       // 邊緣重疊，避免切到一半
+
+    // 多幀投票（讓顏色更穩）
+    private int frameIndex = 0;                       // 逐幀累加
+    private static final int TRACK_TTL = 10;          // 追蹤幀數存活
+
+
+    private static class TLTrack {
+        RectF box;
+        int seenFrame;
+        int[] votes = new int[4]; // 保留
+        int stable = 0;           // 目前穩定色 (0/1/2/3)
+        int cand   = 0;           // 當前候選色
+        int streak = 0;           // 候選色連續幀數
+        int hold   = 0;           // 已確認後的保留幀數
+    }
+    private final List<TLTrack> tlTracks = new ArrayList<>();
+
+    private ExecutorService cameraExecutor;
+    private Handler ui;
+
+    private static final boolean TL_DEBUG_LOG   = true;   // 想看細節就 true
     private static final Scalar LOWER_RED1 = new Scalar(0, 70, 50);
     private static final Scalar UPPER_RED1 = new Scalar(10, 255, 255);
     private static final Scalar LOWER_RED2 = new Scalar(160, 70, 50);
@@ -155,14 +208,22 @@ public class MainActivity extends AppCompatActivity {
 
     // 手機鏡頭離地高度（公尺）— 可微調或做成設定
     public static final float H_CAMERA = 1.40f;
-
     public float getCurrentDx() { return currentDx; }
     public float getCurrentDy() { return currentDy; }
     public int getLastImageHeightPx() { return lastImageHeightPx; }
+    private static final String ALERT_CHANNEL_ID = "alert_channel_sound_novib";
+    private static final String ALERT_CHANNEL_NAME = "行人/紅綠燈提醒";
+    private BluetoothGattCharacteristic vibChar = null;         // 震動用特徵值快取
+    private final java.util.concurrent.atomic.AtomicBoolean analyzing = new java.util.concurrent.atomic.AtomicBoolean(false);
+    private long lastAnalyzeMs = 0;
+    private static final long MIN_INTERVAL_MS = 66; // ~15 FPS，可依機型調整
+
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        cameraExecutor = Executors.newSingleThreadExecutor();
+        ui = new Handler(Looper.getMainLooper());
 
         if (!OpenCVLoader.initDebug()) {
             Log.e("OpenCV", "Unable to load OpenCV");
@@ -181,6 +242,8 @@ public class MainActivity extends AppCompatActivity {
 
         setContentView(R.layout.activity_main);
         createNotificationChannel();
+        requestBtPermsIfNeeded();
+        ensureMiBandConnected();
         previewView = findViewById(R.id.previewView);
         overlayView = findViewById(R.id.overlay);
         tvSpeed = findViewById(R.id.tv_speed);
@@ -194,12 +257,16 @@ public class MainActivity extends AppCompatActivity {
             startCamera();
             startLocationUpdates();
         } else {
+//            ActivityCompat.requestPermissions(this,
+//                    new String[]{
+//                            Manifest.permission.CAMERA,
+//                            Manifest.permission.ACCESS_FINE_LOCATION,
+//                            Manifest.permission.POST_NOTIFICATIONS
+//                    }, PERMISSION_CODE);}
             ActivityCompat.requestPermissions(this,
-                    new String[]{
-                            Manifest.permission.CAMERA,
-                            Manifest.permission.ACCESS_FINE_LOCATION,
-                            Manifest.permission.POST_NOTIFICATIONS
-                    }, PERMISSION_CODE);}
+                         new String[]{ Manifest.permission.CAMERA,
+                                               Manifest.permission.ACCESS_FINE_LOCATION },
+                         PERMISSION_CODE);}
 
         try {
             detector = new DetectorMain(getAssets(), "best_float16.tflite", "All");
@@ -224,154 +291,97 @@ public class MainActivity extends AppCompatActivity {
         //初始化藍牙並請求權限
         BluetoothManager bluetoothManager = (BluetoothManager) getSystemService(Context.BLUETOOTH_SERVICE);
         bluetoothAdapter = bluetoothManager.getAdapter();
-        requestBluetoothPermissions(); // 呼叫藍牙權限請
-
-
-        createNotificationChannel();
+        //requestBluetoothPermissions(); // 呼叫藍牙權限請
         findViewById(R.id.btnSettings).setOnClickListener(v -> showSettingsDialog());
-    }
-    //加入藍芽權限請求
-    private void requestBluetoothPermissions() {
-        Log.d("MiBand", "準備請求藍牙權限");
 
+    }
+
+
+
+    private boolean hasBtConnect() {
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+                ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT)
+                        == PackageManager.PERMISSION_GRANTED;
+    }
+    private boolean hasBtScan() {
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+                ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN)
+                        == PackageManager.PERMISSION_GRANTED;
+    }
+    private void requestBtPermsIfNeeded() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            ActivityCompat.requestPermissions(this, new String[]{
-                    Manifest.permission.BLUETOOTH_CONNECT,
-                    Manifest.permission.BLUETOOTH_SCAN
-            }, REQUEST_BLUETOOTH_PERMISSIONS);
-        } else {
-            Log.d("MiBand", "Android 版本低於 12，跳過藍牙權限請求");
-            scanAndConnectMiBand();  // 如果低版本可以直接掃描
+            ArrayList<String> req = new ArrayList<>();
+            if (!hasBtConnect()) req.add(Manifest.permission.BLUETOOTH_CONNECT);
+            if (!hasBtScan())    req.add(Manifest.permission.BLUETOOTH_SCAN);
+            if (!req.isEmpty()) {
+                ActivityCompat.requestPermissions(this, req.toArray(new String[0]), REQUEST_BLUETOOTH_PERMISSIONS);
+            }
         }
     }
-    //掃描並連線手環
-    private void scanAndConnectMiBand() {
-        Log.d("MiBand", "執行 scanAndConnectMiBand()");
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
-            Log.w("MiBand", "缺少 BLUETOOTH_SCAN 權限");
-            return;
+
+    //從已配對裝置連線
+    @SuppressLint("MissingPermission")
+    private void tryConnectFromBonded() {
+        if (!hasBtConnect()) { requestBtPermsIfNeeded(); return; }
+        if (bluetoothAdapter == null) return;
+
+        for (BluetoothDevice d : bluetoothAdapter.getBondedDevices()) { // 需要 CONNECT
+            String name = d.getName();                                  // 需要 CONNECT
+            if (name != null && (name.contains("Mi") || name.contains("Band") || name.contains("Xiaomi")
+                    || (targetDeviceName != null && name.contains(targetDeviceName)))) {
+                Log.d("MiBand", "從已配對裝置直接連: " + name + " / " + d.getAddress());
+
+                return;
+            }
         }
-
-        bluetoothLeScanner = bluetoothAdapter.getBluetoothLeScanner();
-        bluetoothLeScanner.startScan(new ScanCallback() {
-            @Override
-            public void onScanResult(int callbackType, ScanResult result) {
-                Log.d("MiBand", "掃描到裝置");
-                BluetoothDevice device = result.getDevice();
-                if (ActivityCompat.checkSelfPermission(MainActivity.this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-                    Log.w("MiBand", "缺少 BLUETOOTH_CONNECT 權限，略過裝置");
-                    return;
-                }
-
-                if (device != null) {
-                    Log.d("MiBand", "找到手環：" + device.getName());
-                    bluetoothLeScanner.stopScan(this);
-                    connectToMiBand(device);
-                }
-            }
-        });
-    }
-    //連線與震動功能
-    private void connectToMiBand(BluetoothDevice device) {
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-            Log.w("MiBand", "缺少 BLUETOOTH_CONNECT 權限");
-            return;
-        }
-
-        bluetoothGatt = device.connectGatt(this, false, new BluetoothGattCallback() {
-            private final Context context = MainActivity.this;
-            @Override
-            public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
-                if (ActivityCompat.checkSelfPermission(MainActivity.this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
-                    Log.d("MiBand", "成功連線到手環");
-                    bluetoothGatt.discoverServices();
-                } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                    Log.d("MiBand", "手環已斷線");
-                }
-            }
-
-            @Override
-            public void onServicesDiscovered(BluetoothGatt gatt, int status) {
-                Log.d("MiBand", "開始嘗試使用私有UUID震動");
-
-                // 原本的 UUID 嘗試
-                UUID vibrationServiceUUID = UUID.fromString("7365a0ae-e596-129d-d84a-88db1ffbcc04");
-                UUID vibrationCharUUID = UUID.fromString("1c7cfacb-7818-c09c-9345-04602070e0cc");
-
-                BluetoothGattService service = gatt.getService(vibrationServiceUUID);
-                if (service != null) {
-                    BluetoothGattCharacteristic vibrationChar = service.getCharacteristic(vibrationCharUUID);
-                    if (vibrationChar != null &&
-                            ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
-                    } else {
-                        Log.d("MiBand", "找不到震動特徵值");
-                    }
-                } else {
-                    Log.w("MiBand", "找不到震動服務");
-                }
-
-            }
-        });
-
-
     }
 
+    @SuppressLint("MissingPermission")
     private void triggerMiBandVibration() {
-        if (bluetoothGatt == null) {
-            Log.w("MiBand", "bluetoothGatt 為 null，無法震動");
-            return;
-        }
-
-        UUID vibrationServiceUUID = UUID.fromString("7365a0ae-e596-129d-d84a-88db1ffbcc04");
-        UUID vibrationCharUUID = UUID.fromString("1c7cfacb-7818-c09c-9345-04602070e0cc");
-
-        BluetoothGattService service = bluetoothGatt.getService(vibrationServiceUUID);
-        if (service != null) {
-            BluetoothGattCharacteristic vibrationChar = service.getCharacteristic(vibrationCharUUID);
-            if (vibrationChar != null&&ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
-                vibrationChar.setValue(new byte[]{0x01});
-                boolean success = bluetoothGatt.writeCharacteristic(vibrationChar);
-                Log.d("MiBand", "試圖震動小米手環：" + success);
-            } else {
-                Log.w("MiBand", "找不到震動特徵值");
-            }
-        } else {
-            Log.w("MiBand", "找不到震動服務");
+        if (!hasBtConnect()) { requestBtPermsIfNeeded(); return; }
+        if (bluetoothGatt == null || vibChar == null) { Log.w("MiBand","gatt/char 為 null"); return; }
+        vibChar.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
+        vibChar.setValue(new byte[]{0x02});
+        try {
+            boolean ok = bluetoothGatt.writeCharacteristic(vibChar);
+            Log.d("MiBand","write vibrate -> " + ok);
+        } catch (SecurityException se) {
+            Log.e("MiBand","writeCharacteristic 被拒", se);
         }
     }
 
 
     private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationChannel channel = new NotificationChannel(
-                    "alert_channel",                     // Channel ID
-                    "行人/紅綠燈提醒",                     // 名稱
-                    NotificationManager.IMPORTANCE_HIGH  // 優先權
+            NotificationManager nm = getSystemService(NotificationManager.class);
+
+            // 先刪同名（理論上新 ID 不會撞，但保險）
+            NotificationChannel existing = nm.getNotificationChannel(ALERT_CHANNEL_ID);
+            if (existing != null) nm.deleteNotificationChannel(ALERT_CHANNEL_ID);
+
+            NotificationChannel ch = new NotificationChannel(
+                    ALERT_CHANNEL_ID,
+                    ALERT_CHANNEL_NAME,
+                    NotificationManager.IMPORTANCE_DEFAULT   // 有聲、不彈頭貼
             );
-            channel.setDescription("用於警示行人、紅綠燈等事件");
+            ch.setDescription("有聲、不震（手機），手環由 Mi Fitness 鏡像震動");
+            ch.enableVibration(false);                 // 關震動
+            ch.setVibrationPattern(new long[]{0});     // 明確不震
+            Uri sound = Settings.System.DEFAULT_NOTIFICATION_URI;
+            AudioAttributes attrs = new AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build();
+            ch.setSound(sound, attrs);                 // 開聲音
+            nm.createNotificationChannel(ch);
 
-            NotificationManager notificationManager = getSystemService(NotificationManager.class);
-            notificationManager.createNotificationChannel(channel);
+            NotificationChannel v = nm.getNotificationChannel(ALERT_CHANNEL_ID);
+            Log.d("CHAN", "created: importance=" + (v!=null?v.getImportance():-1)
+                    + " vib=" + (v!=null && v.shouldVibrate())
+                    + " sound=" + (v!=null && v.getSound()!=null));
         }
     }
-    private void sendAlertNotification(String title, String content) {
-        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, "alert_channel")
-                .setSmallIcon(R.drawable.ic_launcher_foreground) // 替換成你自己的 icon
-                .setContentTitle(title)
-                .setContentText(content)
-                .setPriority(NotificationCompat.PRIORITY_HIGH)
-                .setAutoCancel(true);
 
-        NotificationManagerCompat notificationManager = NotificationManagerCompat.from(this);
-
-        // 檢查權限
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
-                == PackageManager.PERMISSION_GRANTED) {
-            notificationManager.notify((int) System.currentTimeMillis(), builder.build());
-        } else {
-            Log.w("通知權限", "尚未取得通知權限，無法顯示通知");
-        }
-    }
 
     private void startCamera() {
         previewView.post(() -> {
@@ -384,14 +394,13 @@ public class MainActivity extends AppCompatActivity {
 
                     // 1. Preview 設定
                     Preview preview = new Preview.Builder().build();
-                    previewView.setImplementationMode(PreviewView.ImplementationMode.COMPATIBLE);
+                    previewView.setImplementationMode(PreviewView.ImplementationMode.PERFORMANCE);
                     previewView.setScaleType(PreviewView.ScaleType.FIT_CENTER);
 
                     // 安全取得旋轉
                     Display display = previewView.getDisplay();
                     int rotation = (display != null) ? display.getRotation() : Surface.ROTATION_0;
                     preview.setTargetRotation(rotation);
-
                     preview.setSurfaceProvider(previewView.getSurfaceProvider());
 
                     // 2. 選擇後鏡頭
@@ -402,70 +411,110 @@ public class MainActivity extends AppCompatActivity {
                     // 3. ImageAnalysis 設定
                     ImageAnalysis analysis = new ImageAnalysis.Builder()
                             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                            .setTargetResolution(new android.util.Size(1920, 1080)) // 需要再快可改 1280x720
+                            .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888) // ✅ 改 RGBA
+                            .setImageQueueDepth(1)
                             .build();
                     analysis.setTargetRotation(rotation);
 
-                    // 4. 設定 Analyzer
-                    analysis.setAnalyzer(ContextCompat.getMainExecutor(this), image -> {
-                        Bitmap bitmap = imageToBitmap(image);
-                        currentBitmap = bitmap;
-                        lastImageHeightPx = bitmap.getHeight();
+                    // ★ 讓 Preview & Analysis 共用同一個 ViewPort（裁切/比例一致）
+                    androidx.camera.core.ViewPort vp =
+                            new androidx.camera.core.ViewPort.Builder(
+                                    new android.util.Rational(previewView.getWidth(), previewView.getHeight()),
+                                    rotation // 用你前面已算好的 rotation
+                            )
+                                    .setScaleType(androidx.camera.core.ViewPort.FIT) // 對齊 PreviewView 的 FIT_CENTER 顯示
+                                    .build();
 
-                        // 用「實際使用的 bitmap 高度」算 fPxY（確保軸一致）
-                        if (focalMm > 0 && sensorHeightMm > 0 && fPxY <= 0) {
-                            fPxY = (focalMm / sensorHeightMm) * bitmap.getHeight();
-                        }
-
-                        List<DetectorMain.Recognition> rawResults =
-                                detector.detect(bitmap, bitmap.getWidth(), bitmap.getHeight());
-
-                        List<DetectorMain.Recognition> tlResults = new ArrayList<>();
-                        for (DetectorMain.Recognition r : rawResults) {
-                            if ("traffic_light".equals(r.getTitle())) {
-                                tlResults.add(r);
-                            }
-                        }
-
-                        List<DetectorMain.Recognition> tlFiltered = nonMaxSuppression(tlResults, 0.5f);
-                        for (DetectorMain.Recognition tl : tlFiltered) {
-                            String color = detectTrafficLightColor(bitmap, tl.getLocation());
-                            tl.setColor(color);
-                            lastTLHeightPx = tl.getLocation().height();
-                        }
-
-                        float viewW = previewView.getWidth();
-                        float viewH = previewView.getHeight();
-                        float imgW  = bitmap.getWidth();
-                        float imgH  = bitmap.getHeight();
-                        float scale = Math.min(viewW / imgW, viewH / imgH);
-                        float dx = (viewW  - imgW * scale) / 2f;
-                        float dy = (viewH  - imgH * scale) / 2f;
-
-                        currentScale = scale;
-                        currentDx = dx;
-                        currentDy = dy;
-
-                        List<DetectorMain.Recognition> viewResults = new ArrayList<>();
-                        for (DetectorMain.Recognition r : rawResults) {
-                            RectF rawBox = r.getLocation();
-                            RectF viewBox = new RectF(
-                                    rawBox.left   * scale + dx,
-                                    rawBox.top    * scale + dy,
-                                    rawBox.right  * scale + dx,
-                                    rawBox.bottom * scale + dy
-                            );
-                            r.setLocation(viewBox);
-                            viewResults.add(r);
-                        }
-
-                        overlayView.setResults(viewResults);
-                        processPedestrianLogic(viewResults);
-                        image.close();
-                    });
+                    androidx.camera.core.UseCaseGroup ucg =
+                            new androidx.camera.core.UseCaseGroup.Builder()
+                                    .addUseCase(preview)   // 用你前面已建立的 preview
+                                    .addUseCase(analysis)  // 用你前面已建立的 analysis
+                                    .setViewPort(vp)
+                                    .build();
 
                     cameraProvider.unbindAll();
-                    androidx.camera.core.Camera camera =
-                            cameraProvider.bindToLifecycle(this, cameraSelector, preview, analysis);
+                    camera = cameraProvider.bindToLifecycle(this, cameraSelector, ucg);
+
+                    // 4. 設定 Analyzer（建議用主執行緒，如要用 cameraExecutor 也可）
+                    analysis.setAnalyzer(cameraExecutor, image -> {
+                        if (!analyzing.compareAndSet(false, true)) { image.close(); return; }
+
+                        long now = android.os.SystemClock.uptimeMillis();
+                        if (now - lastAnalyzeMs < MIN_INTERVAL_MS) { // ~15fps，可自行調整
+                            image.close();
+                            analyzing.set(false);
+                            return;
+                        }
+                        lastAnalyzeMs = now;
+
+                        try {
+                            frameIndex++;
+
+                            // ✅ 走快速路徑（因為上面把輸出改成 RGBA）
+                            Bitmap bitmap = imageToBitmapFast(image);
+                            currentBitmap = bitmap;
+                            lastImageHeightPx = bitmap.getHeight();
+
+                            if (focalMm > 0 && sensorHeightMm > 0 &&
+                                    (fPxY <= 0f || lastImageHeightPx != bitmap.getHeight())) {
+                                fPxY = (focalMm / sensorHeightMm) * bitmap.getHeight();
+                            }
+
+                            // ✓ 自適應平鋪：每隔一幀才做 2×2，另一幀跑全圖，降低 GC
+                            boolean useTiles = (frameIndex & 1) == 0; // 偶數幀做平鋪
+                            List<DetectorMain.Recognition> detAll = useTiles
+                                    ? detectTiled(bitmap, TILE_COLS, TILE_ROWS, TILE_OVERLAP)
+                                    : detector.detect(bitmap, bitmap.getWidth(), bitmap.getHeight());
+
+                            // 交通號誌的門檻先過濾，降低後面 OpenCV 的負擔
+                            List<DetectorMain.Recognition> filtered = new ArrayList<>();
+                            for (DetectorMain.Recognition r : detAll) {
+                                if ("traffic_light".equals(r.getTitle())) {
+                                    if (r.getConfidence() >= TL_CONF &&
+                                            Math.min(r.getLocation().width(), r.getLocation().height()) >= MIN_BOX_PX) { // 稍微放大最小框
+                                        filtered.add(r);
+                                    }
+                                } else {
+                                    filtered.add(r);
+                                }
+                            }
+
+                            List<DetectorMain.Recognition> kept = nmsByClass(filtered, IOU_NMS);
+
+                            // 只對較大的紅綠燈 & 每隔一幀才判色（再減負載）
+                            float maxTlH = -1f;
+                            boolean doColorThisFrame = (frameIndex & 1) == 0;
+                            for (DetectorMain.Recognition r : kept) {
+                                if ("traffic_light".equals(r.getTitle())) {
+                                    if ("traffic_light".equals(r.getTitle())) {
+                                        // 這裡 r.getLocation() 仍是「影像座標」，正確！等會兒再 map 到畫面座標
+                                        String c = detectTrafficLightColor(bitmap, r.getLocation()); // 你的 HSV 比例法
+                                        r.setColor(c);
+                                        Log.d("DEBUG_TL", "TrafficLight color = " + c);
+                                    }
+
+                                    if (r.getLocation().height() > maxTlH) maxTlH = r.getLocation().height();
+                                }
+                            }
+                            if (maxTlH > 0) lastTLHeightPx = maxTlH;
+
+                            // 映射到 Overlay 座標（保留你原本距離/顯示邏輯）
+                            int imgW = bitmap.getWidth(), imgH = bitmap.getHeight();
+                            List<DetectorMain.Recognition> viewResults = toOverlayResults(kept, imgW, imgH);
+
+                            // UI 更新丟回主執行緒
+                            runOnUiThread(() -> {
+                                overlayView.setResults(viewResults);
+                                processPedestrianLogic(viewResults);
+                            });
+                        } catch (Throwable t) {
+                            Log.e("Analyzer", "analyze error", t);
+                        } finally {
+                            image.close();
+                            analyzing.set(false);
+                        }
+                    });
 
                     Camera2CameraInfo cam2Info = Camera2CameraInfo.from(camera.getCameraInfo());
 
@@ -491,7 +540,31 @@ public class MainActivity extends AppCompatActivity {
             }, ContextCompat.getMainExecutor(this));
         });
     }
+    // 若你沒有這個欄位，順便加上
+    private final java.util.concurrent.atomic.AtomicReference<Bitmap> reusableBmp =
+            new java.util.concurrent.atomic.AtomicReference<>();
 
+    private Bitmap imageToBitmapFast(androidx.camera.core.ImageProxy image) {
+        androidx.camera.core.ImageProxy.PlaneProxy plane = image.getPlanes()[0];
+        int w = image.getWidth(), h = image.getHeight();
+
+        Bitmap bmp = reusableBmp.get();
+        if (bmp == null || bmp.getWidth() != w || bmp.getHeight() != h) {
+            bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+            reusableBmp.set(bmp);
+        }
+        java.nio.ByteBuffer buf = plane.getBuffer();
+        buf.rewind();
+        bmp.copyPixelsFromBuffer(buf);
+
+        int rotation = image.getImageInfo().getRotationDegrees();
+        if (rotation != 0) {
+            Matrix m = new Matrix();
+            m.postRotate(rotation);
+            bmp = Bitmap.createBitmap(bmp, 0, 0, w, h, m, true);
+        }
+        return bmp;
+    }
 
     private Bitmap imageToBitmap(ImageProxy image) {
         // 1. 先拿到旋轉角度
@@ -511,14 +584,23 @@ public class MainActivity extends AppCompatActivity {
         vBuffer.get(nv21, ySize, vSize);
         uBuffer.get(nv21, ySize + vSize, uSize);
 
-        YuvImage yuv = new YuvImage(nv21, ImageFormat.NV21,
-                image.getWidth(), image.getHeight(), null);
+//        android.graphics.Rect crop = image.getCropRect();
+//
+//        YuvImage yuv = new YuvImage(nv21, ImageFormat.NV21,
+//                image.getWidth(), image.getHeight(), null);
+//        ByteArrayOutputStream out = new ByteArrayOutputStream();
+//        yuv.compressToJpeg(
+//                new android.graphics.Rect(0, 0, image.getWidth(), image.getHeight()),
+//                100,
+//                out
+//        );
+
+        android.graphics.Rect crop = image.getCropRect();
+
+        YuvImage yuv = new YuvImage(nv21, ImageFormat.NV21, image.getWidth(), image.getHeight(), null);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
-        yuv.compressToJpeg(
-                new android.graphics.Rect(0, 0, image.getWidth(), image.getHeight()),
-                100,
-                out
-        );
+
+        yuv.compressToJpeg(crop, 100, out);
 
         byte[] jpeg = out.toByteArray();
         Bitmap raw = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length);
@@ -533,6 +615,46 @@ public class MainActivity extends AppCompatActivity {
         return rotated;
     }
 
+    private final int[] pvLoc = new int[2];
+    private final int[] ovLoc = new int[2];
+
+    private RectF mapRectToOverlay(RectF imgRect, int imgW, int imgH) {
+        float viewW = overlayView.getWidth();
+        float viewH = overlayView.getHeight();
+
+        // 與 PreviewView.FIT_CENTER 對應的 letterbox 縮放
+        float scale = Math.min(viewW / imgW, viewH / imgH);
+        float dx = (viewW - imgW * scale) / 2f;
+        float dy = (viewH - imgH * scale) / 2f;
+
+        // 若 previewView 與 overlayView 在父容器位置不同，補上相對位移
+        previewView.getLocationInWindow(pvLoc);
+        overlayView.getLocationInWindow(ovLoc);
+        dx += (pvLoc[0] - ovLoc[0]);
+        dy += (pvLoc[1] - ovLoc[1]);
+
+        // 保留你既有的距離/顯示邏輯會用到的比例與偏移
+        currentScale = scale;
+        currentDx = dx;
+        currentDy = dy;
+
+        return new RectF(
+                imgRect.left   * scale + dx,
+                imgRect.top    * scale + dy,
+                imgRect.right  * scale + dx,
+                imgRect.bottom * scale + dy
+        );
+    }
+    private List<DetectorMain.Recognition> toOverlayResults(
+            List<DetectorMain.Recognition> src, int imgW, int imgH) {
+        List<DetectorMain.Recognition> out = new ArrayList<>(src.size());
+        for (DetectorMain.Recognition r : src) {
+            RectF v = mapRectToOverlay(r.getLocation(), imgW, imgH);
+            r.setLocation(v);
+            out.add(r);
+        }
+        return out;
+    }
 
 
     private void startLocationUpdates() {
@@ -620,7 +742,8 @@ public class MainActivity extends AppCompatActivity {
 
             ApiService apiService = RetrofitClient.getInstance().create(ApiService.class);
             SensitivityRequest sensitivityRequest = new SensitivityRequest(userId, sensitivityLevel);
-            ReminderRequest reminderRequest = new ReminderRequest(userId,
+            ReminderRequest reminderRequest = new ReminderRequest(
+                    userId,
                     isVoiceEnabled ? 1 : 0,
                     isVibrationEnabled ? 1 : 0);
 
@@ -689,12 +812,68 @@ public class MainActivity extends AppCompatActivity {
             }
             if (granted) {
                 Log.d("MiBand", "藍牙權限已授權，開始掃描");
-                scanAndConnectMiBand();
+                ensureMiBandConnected();
+                //scanAndConnectMiBand();
             } else {
                 Toast.makeText(this, "未授權藍牙權限，無法連線手環", Toast.LENGTH_SHORT).show();
             }
         }
     }
+
+    private boolean isLocationEnabled() {
+        LocationManager lm = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
+        try { return lm.isProviderEnabled(LocationManager.GPS_PROVIDER) || lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER); }
+        catch (Exception e) { return false; }
+    }
+
+    private void ensureMiBandConnected() {
+        if (bluetoothGatt != null) return; // 已有連線物件就不重來
+
+        // 藍牙要開
+        if (bluetoothAdapter == null || !bluetoothAdapter.isEnabled()) {
+            Log.w("MiBand", "藍牙未開啟，請先開啟藍牙");
+            try { startActivity(new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)); } catch (Exception ignore) {}
+            return;
+        }
+        // 某些機型掃描需要開定位
+        if (!isLocationEnabled()) {
+            Log.w("MiBand", "系統定位未開啟，可能導致掃描為空");
+            try { startActivity(new Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS)); } catch (Exception ignore) {}
+        }
+        // 權限（Android 12+）
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED
+                    || ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(this, new String[]{
+                        Manifest.permission.BLUETOOTH_CONNECT,
+                        Manifest.permission.BLUETOOTH_SCAN
+                }, REQUEST_BLUETOOTH_PERMISSIONS);
+                return;
+            }
+        }
+        tryConnectFromBonded(); // 先從已配對直連，沒有再掃描
+    }
+
+    private void sendAlertNotification(String title, String content) {
+        if (!isVibrationEnabled) return;
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, ALERT_CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_launcher_foreground) // 替換成你自己的 icon
+                .setContentTitle(title)
+                .setContentText(content)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setAutoCancel(true);
+
+        NotificationManagerCompat notificationManager = NotificationManagerCompat.from(this);
+
+        // 檢查權限
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                == PackageManager.PERMISSION_GRANTED) {
+            notificationManager.notify((int) System.currentTimeMillis(), builder.build());
+        } else {
+            Log.w("通知權限", "尚未取得通知權限，無法顯示通知");
+        }
+    }
+
 
     private void processPedestrianLogic(List<DetectorMain.Recognition> recognitions) {
         boolean hasPerson = false;
@@ -702,14 +881,12 @@ public class MainActivity extends AppCompatActivity {
         float personDistance = -1f;
         String trafficLightColor = "unknown";
 
-        // 1) 打印所有标签
         for (DetectorMain.Recognition r : recognitions) {
             Log.d("DEBUG_DET", "Detected title=" + r.getTitle()
                     + "  bbox=" + r.getLocation()
                     + "  conf=" + r.getConfidence());
         }
 
-        // 2) 处理逻辑
         for (DetectorMain.Recognition r : recognitions) {
             String title = r.getTitle().toLowerCase();
             RectF loc = r.getLocation();
@@ -740,22 +917,18 @@ public class MainActivity extends AppCompatActivity {
         switch (sensitivityLevel) {
             case 3:
                 if (personDistance <= 20f) {
-                    triggerVibrationOnce("高靈敏度：行人接近");
                     speakOnce("前方有行人，請注意");
                     sendAlertNotification("行人靠近", "前方有行人，請小心慢行");
                 }
                 break;
             case 2:
                 if (hasCrosswalk && personDistance <= 15f) {
-                    triggerVibrationOnce("中靈敏度：行人+斑馬線");
                     speakOnce("行人準備過馬路，請減速");
                     sendAlertNotification("行人靠近", "前方有行人，請小心慢行");
                 }
                 break;
             case 1:
-                // 这里 trafficLightColor 已经被正确赋值了
                 if (hasCrosswalk && personDistance <= 10f && "green".equals(trafficLightColor)) {
-                    triggerVibrationOnce("低靈敏度：綠燈+行人+斑馬線");
                     speakOnce("綠燈期間有行人過馬路，請讓行");
                     sendAlertNotification("行人靠近", "前方有行人，請小心慢行");
                 }
@@ -763,8 +936,8 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    float scale = Math.max(getCurrentScale(), 1e-6f);
     private float estimateTrafficLightDistance(List<DetectorMain.Recognition> recognitions) {
+        float scale = Math.max(getCurrentScale(), 1e-6f);
         for (DetectorMain.Recognition r : recognitions) {
             if (!"traffic_light".equals(r.getTitle())) continue;
             float hView = r.getLocation().height();
@@ -776,13 +949,6 @@ public class MainActivity extends AppCompatActivity {
         return -1f;
     }
 
-    private void triggerVibrationOnce(String tag) {
-        if(!isVibrationEnabled) return;
-        long now = System.currentTimeMillis();
-        if (now - lastVibrationTime < REMINDER_COOLDOWN_MS) return;
-        triggerMiBandVibration(); lastVibrationTime = now;
-        Log.d("提醒", "觸發提醒: " + tag);
-    }
     private void speakOnce(String message) {
         if (!isVoiceEnabled) return;
 
@@ -799,55 +965,55 @@ public class MainActivity extends AppCompatActivity {
 
 
     private String detectTrafficLightColor(Bitmap fullBmp, RectF rawBox) {
-        Mat mat       = new Mat();
-        Mat mask      = new Mat();
-        Mat maskLight = new Mat();
-        Mat kernel    = null;
+        Mat mat = new Mat(), mask = new Mat(), maskLight = new Mat(), kernel = null;
         List<Mat> hsv = new ArrayList<>();
-
-        // 三色掩膜也要释放
-        Mat redMask    = new Mat(), tmpRed = new Mat();
-        Mat yellowMask = new Mat(), greenMask = new Mat();
+        Mat redMask = new Mat(), tmpRed = new Mat(), yellowMask = new Mat(), greenMask = new Mat();
 
         try {
-            // 1. 裁剪 ROI
-            int x    = Math.max(0, (int) rawBox.left);
-            int y    = Math.max(0, (int) rawBox.top);
-            int w    = Math.min(fullBmp.getWidth() - x, (int) rawBox.width());
-            int hROI = Math.min(fullBmp.getHeight() - y, (int) rawBox.height());
-            if (w < 15 || hROI < 15) return "unknown";
-            Bitmap crop = Bitmap.createBitmap(fullBmp, x, y, w, hROI);
+            // 1) ROI 稍微內縮，避免邊緣
+            RectF box = new RectF(rawBox);
+            float insetX = box.width()  * TL_ROI_INSET;
+            float insetY = box.height() * TL_ROI_INSET;
+            box.inset(insetX, insetY);
 
-            // 2. RGBA -> BGR -> HSV
-            Utils.bitmapToMat(crop, mat);
+            int x = Math.max(0, (int) box.left);
+            int y = Math.max(0, (int) box.top);
+            int w = Math.min(fullBmp.getWidth()  - x, (int) box.width());
+            int h = Math.min(fullBmp.getHeight() - y, (int) box.height());
+            if (w < 15 || h < 15) return "unknown";
+
+            Bitmap crop = Bitmap.createBitmap(fullBmp, x, y, w, h);
+            Bitmap cropSmall = Bitmap.createScaledBitmap(crop, 96, 96, true);
+            crop.recycle();
+
+            // 2) 轉 HSV
+            Utils.bitmapToMat(cropSmall, mat);
+            cropSmall.recycle();
             Imgproc.cvtColor(mat, mat, Imgproc.COLOR_RGBA2BGR);
             Imgproc.cvtColor(mat, mat, Imgproc.COLOR_BGR2HSV);
 
-            // 3. 拆出 H/S/V
+
+            // 3) 拆 H/S/V
             Core.split(mat, hsv);
             Mat hueChan   = hsv.get(0);
             Mat satChan   = hsv.get(1);
             Mat valueChan = hsv.get(2);
 
-            // 4. Otsu on V 得最亮区
-            Imgproc.threshold(valueChan, mask,
-                    0, 255, Imgproc.THRESH_BINARY + Imgproc.THRESH_OTSU);
-            // 可加饱和度过滤去掉壳反光
+            // 4) 用 Otsu 找亮區 + 降低飽和度門檻
+            Imgproc.threshold(valueChan, mask, 0, 255, Imgproc.THRESH_BINARY + Imgproc.THRESH_OTSU);
             Mat satMask = new Mat();
-            Imgproc.threshold(satChan, satMask, 100, 255, Imgproc.THRESH_BINARY);
+            Imgproc.threshold(satChan, satMask, 60, 255, Imgproc.THRESH_BINARY); // 60 比 100 寬鬆
             Core.bitwise_and(mask, satMask, mask);
             satMask.release();
 
-            // 5. 开闭去噪
-            kernel = Imgproc.getStructuringElement(
-                    Imgproc.MORPH_ELLIPSE, new Size(3, 3));
+            // 5) 輕度開閉去噪
+            kernel = Imgproc.getStructuringElement(Imgproc.MORPH_ELLIPSE, new Size(3, 3));
             Imgproc.morphologyEx(mask, mask, Imgproc.MORPH_OPEN,  kernel);
             Imgproc.morphologyEx(mask, mask, Imgproc.MORPH_CLOSE, kernel);
 
-            // 6. 找最大轮廓当灯泡
+            // 6) 取最大亮區
             List<MatOfPoint> contours = new ArrayList<>();
-            Imgproc.findContours(mask.clone(), contours,
-                    new Mat(), Imgproc.RETR_EXTERNAL, Imgproc.CHAIN_APPROX_SIMPLE);
+            Imgproc.findContours(mask.clone(), contours, new Mat(), Imgproc.RETR_EXTERNAL, Imgproc.CHAIN_APPROX_SIMPLE);
             maskLight = Mat.zeros(mask.size(), mask.type());
             if (!contours.isEmpty()) {
                 double maxA = 0; int idx = 0;
@@ -860,62 +1026,110 @@ public class MainActivity extends AppCompatActivity {
                 maskLight = mask.clone();
             }
 
-            // ===== STEP 8：分别生成三色掩膜并统计 =====
-            // 红：低 H 和 高 H 两段
+            // 7) 三色掩膜（在 HSV 空間）
             Core.inRange(mat, LOWER_RED1, UPPER_RED1, redMask);
             Core.inRange(mat, LOWER_RED2, UPPER_RED2, tmpRed);
             Core.add(redMask, tmpRed, redMask);
-
-            // 黄
             Core.inRange(mat, LOWER_YELLOW, UPPER_YELLOW, yellowMask);
+            Core.inRange(mat, LOWER_GREEN, UPPER_GREEN,   greenMask);
 
-            // 绿
-            Core.inRange(mat, LOWER_GREEN, UPPER_GREEN, greenMask);
+            // 與最亮區相交
+            Core.bitwise_and(redMask,    maskLight, redMask);
+            Core.bitwise_and(yellowMask, maskLight, yellowMask);
+            Core.bitwise_and(greenMask,  maskLight, greenMask);
 
-            // 与最亮区相交，去掉灯壳与背景
-            Core.bitwise_and(redMask,   maskLight, redMask);
-            Core.bitwise_and(yellowMask,maskLight, yellowMask);
-            Core.bitwise_and(greenMask, maskLight, greenMask);
-
-            // 统计
+            // 8) 嚴格判色（主要路徑）
             int cntR  = Core.countNonZero(redMask);
             int cntY  = Core.countNonZero(yellowMask);
             int cntG  = Core.countNonZero(greenMask);
             int total = Core.countNonZero(maskLight);
 
-            double ratioR = cntR / (double) total;
-            double ratioY = cntY / (double) total;
-            double ratioG = cntG / (double) total;
+            double ratioR = total > 0 ? cntR / (double) total : 0.0;
+            double ratioY = total > 0 ? cntY / (double) total : 0.0;
+            double ratioG = total > 0 ? cntG / (double) total : 0.0;
 
-            Log.d("DEBUG_TL", String.format(
-                    "ColorRatios R=%.3f Y=%.3f G=%.3f", ratioR, ratioY, ratioG));
+            double max = Math.max(ratioR, Math.max(ratioY, ratioG));
+            double second = (max == ratioR) ? Math.max(ratioY, ratioG)
+                    : (max == ratioY ? Math.max(ratioR, ratioG) : Math.max(ratioR, ratioY));
 
-            if (total < 5) return "unknown";
-
-            // 最终判色（阈值可调）
-            if (ratioR > ratioY && ratioR > ratioG && ratioR > 0.05) {
-                return "red";
-            } else if (ratioY > ratioR && ratioY > ratioG && ratioY > 0.05) {
-                return "yellow";
-            } else if (ratioG > ratioR && ratioG > ratioY && ratioG > 0.05) {
-                return "green";
-            } else {
-                return "unknown";
+            if (TL_DEBUG_LOG) {
+                Scalar mHue = Core.mean(hueChan, maskLight);
+                Scalar mSat = Core.mean(satChan, maskLight);
+                Scalar mVal = Core.mean(valueChan, maskLight);
+                Log.d("TLDBG", String.format(
+                        "roi=%dx%d total=%d R=%d Y=%d G=%d rR=%.3f rY=%.3f rG=%.3f hue=%.1f sat=%.1f val=%.1f",
+                        w, h, total, cntR, cntY, cntG, ratioR, ratioY, ratioG, mHue.val[0], mSat.val[0], mVal.val[0]));
             }
 
+            if (total >= TL_MIN_TOTALPX && max >= TL_MIN_RATIO && (max - second) >= TL_MIN_GAP) {
+                if (max == ratioR) return "red";
+                if (max == ratioY) return "yellow";
+                return "green";
+            }
+
+            // 9) 鬆綁 fallback（亮區太少或比例不明顯時）
+            Mat looseMask = new Mat();
+            Mat valMask2 = new Mat(), satMask2 = new Mat();
+            Imgproc.threshold(valueChan, valMask2, 60, 255, Imgproc.THRESH_BINARY); // V>=60
+            Imgproc.threshold(satChan,   satMask2, 40, 255, Imgproc.THRESH_BINARY); // S>=40
+            Core.bitwise_and(valMask2, satMask2, looseMask);
+            valMask2.release(); satMask2.release();
+
+            Mat red2 = new Mat(), tmp2 = new Mat(), y2 = new Mat(), g2 = new Mat();
+            Core.inRange(mat, new Scalar(0, 40, 40),   new Scalar(10, 255, 255), red2);
+            Core.inRange(mat, new Scalar(160, 40, 40), new Scalar(180, 255, 255), tmp2);
+            Core.add(red2, tmp2, red2);
+            Core.inRange(mat, new Scalar(10, 60, 60),  new Scalar(45, 255, 255), y2);
+            Core.inRange(mat, new Scalar(35, 40, 40),  new Scalar(100,255, 255), g2);
+
+            Core.bitwise_and(red2, looseMask, red2);
+            Core.bitwise_and(y2,   looseMask, y2);
+            Core.bitwise_and(g2,   looseMask, g2);
+
+            int r2 = Core.countNonZero(red2);
+            int y2c = Core.countNonZero(y2);
+            int g2c = Core.countNonZero(g2);
+            int tot2 = Core.countNonZero(looseMask);
+
+            if (TL_DEBUG_LOG) {
+                Log.d("TLDBG", String.format("fallback tot=%d r2=%d y2=%d g2=%d", tot2, r2, y2c, g2c));
+            }
+
+            red2.release(); tmp2.release(); y2.release(); g2.release();
+            looseMask.release();
+
+            if (tot2 > 4) {
+                double rR2 = r2  / (double) tot2;
+                double rY2 = y2c / (double) tot2;
+                double rG2 = g2c / (double) tot2;
+                double m2  = Math.max(rR2, Math.max(rY2, rG2));
+                if (m2 >= 0.02) {
+                    if (m2 == rR2) return "red";
+                    if (m2 == rY2) return "yellow";
+                    return "green";
+                }
+            }
+
+            // 10) 最終兜底：Hue 平均（避免全是 unknown）
+            Scalar mHue = Core.mean(hueChan, maskLight);
+            Scalar mSat = Core.mean(satChan, maskLight);
+            double hue = mHue.val[0], sat = mSat.val[0];
+            if (sat >= 40) {
+                if (hue <= 10 || hue >= 160) return "red";
+                if (hue <= 45) return "yellow";
+                if (hue <= 100) return "green";
+            }
+            return "unknown";
+
         } finally {
-            // 释放所有 Mat
-            mat.release();
-            mask.release();
-            maskLight.release();
-            if (kernel   != null) kernel.release();
-            for (Mat m : hsv)        m.release();
-            redMask.release();
-            tmpRed.release();
-            yellowMask.release();
-            greenMask.release();
+            mat.release(); mask.release(); maskLight.release();
+            if (kernel != null) kernel.release();
+            for (Mat m : hsv) m.release();
+            redMask.release(); tmpRed.release(); yellowMask.release(); greenMask.release();
         }
     }
+
+
 
     private int getMaxVerticalProjection(Mat binaryMask) {
         int rows = binaryMask.rows();
@@ -941,6 +1155,9 @@ public class MainActivity extends AppCompatActivity {
         if (textToSpeech != null) {
             textToSpeech.stop();
             textToSpeech.shutdown();
+        }
+        if (cameraExecutor != null && !cameraExecutor.isShutdown()) {
+            cameraExecutor.shutdown();
         }
         super.onDestroy();
     }
@@ -968,6 +1185,32 @@ public class MainActivity extends AppCompatActivity {
         }
         return kept;
     }
+    private Matrix computeImageToViewMatrix(int imgW, int imgH, float viewW, float viewH,
+                                            PreviewView.ScaleType scaleType) {
+        Matrix m = new Matrix();
+
+        // FIT_CENTER = letterbox：以較小比例縮放（不裁切）
+        // FILL_CENTER = centerCrop：以較大比例縮放（會裁切）
+        boolean isFit = (scaleType == PreviewView.ScaleType.FIT_CENTER
+                || scaleType == PreviewView.ScaleType.FIT_START
+                || scaleType == PreviewView.ScaleType.FIT_END);
+
+        float sx = viewW / imgW;
+        float sy = viewH / imgH;
+        float scale = isFit ? Math.min(sx, sy) : Math.max(sx, sy);
+
+        float dx = (viewW - imgW * scale) * 0.5f;
+        float dy = (viewH - imgH * scale) * 0.5f;
+
+        m.setScale(scale, scale);
+        m.postTranslate(dx, dy);
+
+        // 若你「沒有」手動把 Bitmap 旋轉正向，而是靠 setTargetRotation，
+        // 且你的偵測結果仍在感測器座標，這裡需加上旋轉矩陣。
+        // 不過你目前是把 Bitmap 旋轉為正向再送入模型，就不需要再旋轉。
+        return m;
+    }
+
     private float boxIoU(RectF a, RectF b) {
         float left   = Math.max(a.left,   b.left);
         float right  = Math.min(a.right,  b.right);
@@ -980,6 +1223,158 @@ public class MainActivity extends AppCompatActivity {
         float areaB  = (b.right - b.left) * (b.bottom - b.top);
         return inter / (areaA + areaB - inter);
     }
+
+    private List<DetectorMain.Recognition> detectTiled(Bitmap src, int cols, int rows, int overlap) {
+        int W = src.getWidth(), H = src.getHeight();
+        int tileW = W / cols, tileH = H / rows;
+        List<DetectorMain.Recognition> all = new ArrayList<>();
+
+        for (int r = 0; r < rows; r++) {
+            for (int c = 0; c < cols; c++) {
+                int x0 = Math.max(0, c * tileW - overlap);
+                int y0 = Math.max(0, r * tileH - overlap);
+                int x1 = Math.min(W, (c + 1) * tileW + overlap);
+                int y1 = Math.min(H, (r + 1) * tileH + overlap);
+                int w = x1 - x0, h = y1 - y0;
+                if (w <= 0 || h <= 0) continue;
+
+                Bitmap tile = Bitmap.createBitmap(src, x0, y0, w, h);
+                List<DetectorMain.Recognition> part = detector.detect(tile, w, h);
+
+                for (DetectorMain.Recognition rec : part) {
+                    RectF b = new RectF(rec.getLocation());
+                    b.offset(x0, y0);           // 映回原圖
+                    rec.setLocation(b);
+                    all.add(rec);
+                }
+            }
+        }
+        return nmsByClass(all, IOU_NMS);
+    }
+
+    private List<DetectorMain.Recognition> nmsByClass(
+            List<DetectorMain.Recognition> list, float iouTh) {
+
+        Map<String, List<DetectorMain.Recognition>> by = new HashMap<>();
+
+        for (DetectorMain.Recognition r : list) {
+            List<DetectorMain.Recognition> grp = by.get(r.getTitle());
+            if (grp == null) {
+                grp = new ArrayList<>();
+                by.put(r.getTitle(), grp);
+            }
+            grp.add(r);
+        }
+
+        List<DetectorMain.Recognition> out = new ArrayList<>();
+        for (List<DetectorMain.Recognition> grp : by.values()) {
+            out.addAll(nonMaxSuppression(grp, iouTh)); // 你原本的 NMS
+        }
+        return out;
+    }
+
+
+    private List<DetectorMain.Recognition> mapToViewCoordinates(
+            List<DetectorMain.Recognition> imageResults,
+            float viewW, float viewH, float imgW, float imgH) {
+        float scale = Math.min(viewW / imgW, viewH / imgH);
+        float dx = (viewW - imgW * scale) / 2f;
+        float dy = (viewH - imgH * scale) / 2f;
+
+        List<DetectorMain.Recognition> out = new ArrayList<>();
+        for (DetectorMain.Recognition r : imageResults) {
+            RectF b = r.getLocation();
+            RectF vb = new RectF(
+                    b.left * scale + dx, b.top * scale + dy,
+                    b.right * scale + dx, b.bottom * scale + dy
+            );
+            r.setLocation(vb);
+            out.add(r);
+        }
+        return out;
+    }
+
+    private int colorIdx(String c) {
+        if ("red".equals(c)) return 1;
+        if ("yellow".equals(c)) return 2;
+        if ("green".equals(c)) return 3;
+        return 0;
+    }
+    private String colorStr(int idx) {
+        switch (idx) {
+            case 1: return "red";
+            case 2: return "yellow";
+            case 3: return "green";
+            default: return "unknown";
+        }
+    }
+    private float iou(RectF a, RectF b) {
+        float left = Math.max(a.left, b.left);
+        float top = Math.max(a.top, b.top);
+        float right = Math.min(a.right, b.right);
+        float bottom = Math.min(a.bottom, b.bottom);
+        float interW = Math.max(0f, right - left);
+        float interH = Math.max(0f, bottom - top);
+        float inter = interW * interH;
+        float areaA = Math.max(0f, a.width()) * Math.max(0f, a.height());
+        float areaB = Math.max(0f, b.width()) * Math.max(0f, b.height());
+        float denom = areaA + areaB - inter;
+        return denom > 0 ? inter / denom : 0f;
+    }
+
+    private String voteColorOverFrames(RectF box, String current) {
+        // 清除過期
+        for (int i = tlTracks.size() - 1; i >= 0; i--) {
+            if (frameIndex - tlTracks.get(i).seenFrame > TRACK_TTL) tlTracks.remove(i);
+        }
+
+        // 尋找最像的 track（IoU 放寬到 0.30）
+        TLTrack best = null; float bestIou = 0f;
+        for (TLTrack t : tlTracks) {
+            float iouVal = iou(t.box, box);
+            if (iouVal > bestIou && iouVal >= TRACK_IOU_MATCH) { best = t; bestIou = iouVal; }
+        }
+        if (best == null) {
+            best = new TLTrack();
+            best.box = new RectF(box);
+            best.seenFrame = frameIndex;
+            best.votes = new int[4];
+            tlTracks.add(best);
+        }
+
+        best.seenFrame = frameIndex;
+        best.box = new RectF(box);
+
+        int idx = colorIdx(current);
+
+        // 若這幀不確定（unknown），維持穩定色並延長 hold 一點
+        if (idx == 0) {
+            if (best.stable != 0 && best.hold > 0) best.hold--;
+            return colorStr(best.stable != 0 ? best.stable : 0);
+        }
+
+        // 候選色連續統計
+        if (idx == best.cand) best.streak++;
+        else { best.cand = idx; best.streak = 1; }
+
+        // 若已確認且還在保留期，除非連續很久才允許切換
+        if (best.stable != 0 && best.cand != best.stable) {
+            if (best.streak >= COLOR_CONFIRM_FRAMES && best.hold <= 0) {
+                best.stable = best.cand;
+                best.hold   = COLOR_HOLD_FRAMES;
+            }
+        } else {
+            // 初次確認，或候選==穩定：重設保留
+            if (best.streak >= COLOR_CONFIRM_FRAMES) {
+                best.stable = best.cand;
+                best.hold   = COLOR_HOLD_FRAMES;
+            }
+        }
+
+        return colorStr(best.stable);
+    }
+
+
 
     private float estimateDistanceByHeightPx(float boxHeightPx, float realHeightM) {
         if (fPxY <= 0 || boxHeightPx <= 0) return -1f;
@@ -1001,3 +1396,4 @@ public class MainActivity extends AppCompatActivity {
 
     public float getCalibScale() { return calibScale; }
 }
+
