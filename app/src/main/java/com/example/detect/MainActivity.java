@@ -110,8 +110,14 @@ import android.media.AudioAttributes;
 import android.net.Uri;
 import android.provider.Settings;
 
+import com.example.detect.geo.SignalPoint;
+import com.example.detect.geo.SignalRepository;
+import com.example.detect.geo.SignalProximityManager;
+
 @OptIn(markerClass = ExperimentalCamera2Interop.class)
 public class MainActivity extends AppCompatActivity {
+    private SignalRepository signalRepo;
+    private SignalProximityManager signalPM;
     private PreviewView previewView;
     private OverlayView overlayView;
     private TextView tvSpeed;
@@ -241,6 +247,8 @@ public class MainActivity extends AppCompatActivity {
         }
 
         setContentView(R.layout.activity_main);
+        signalRepo = new SignalRepository(this);
+        signalRepo.loadFromAssets("export.geojson");
         createNotificationChannel();
         requestBtPermsIfNeeded();
         ensureMiBandConnected();
@@ -256,13 +264,8 @@ public class MainActivity extends AppCompatActivity {
                         == PackageManager.PERMISSION_GRANTED) {
             startCamera();
             startLocationUpdates();
+            startSignalProximity();
         } else {
-//            ActivityCompat.requestPermissions(this,
-//                    new String[]{
-//                            Manifest.permission.CAMERA,
-//                            Manifest.permission.ACCESS_FINE_LOCATION,
-//                            Manifest.permission.POST_NOTIFICATIONS
-//                    }, PERMISSION_CODE);}
             ActivityCompat.requestPermissions(this,
                          new String[]{ Manifest.permission.CAMERA,
                                                Manifest.permission.ACCESS_FINE_LOCATION },
@@ -800,6 +803,7 @@ public class MainActivity extends AppCompatActivity {
         if (requestCode == PERMISSION_CODE && grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
             startCamera();
             startLocationUpdates();
+            startSignalProximity();
         }
         if (requestCode == REQUEST_BLUETOOTH_PERMISSIONS) {
             Log.d("MiBand", "收到藍牙權限結果");
@@ -855,7 +859,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void sendAlertNotification(String title, String content) {
-        if (!isVibrationEnabled) return;
+        //if (!isVibrationEnabled) return; //如果有這一行 關閉震動提醒的話他就不會有提醒了!!?
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, ALERT_CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_launcher_foreground) // 替換成你自己的 icon
                 .setContentTitle(title)
@@ -1152,6 +1156,7 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
+        if (signalPM != null) signalPM.stop();
         if (textToSpeech != null) {
             textToSpeech.stop();
             textToSpeech.shutdown();
@@ -1395,5 +1400,27 @@ public class MainActivity extends AppCompatActivity {
     public float getFPxY() { return fPxY; }
 
     public float getCalibScale() { return calibScale; }
+    private void startSignalProximity() {
+        if (signalRepo == null) return;
+
+        signalPM = new SignalProximityManager(
+                this,
+                signalRepo,
+                (SignalPoint p, float dMeters) -> runOnUiThread(() -> {
+                    String msg = String.format(java.util.Locale.getDefault(),
+                            "前方 %.0f 公尺有路口", dMeters);
+                    Toast.makeText(MainActivity.this, msg, Toast.LENGTH_SHORT).show();
+                    if (isVoiceEnabled) {
+                        speakOnce("前方五十公尺有路口，請減速注意");
+                    }
+                    sendAlertNotification("前方路口", "距離約 " + (int)dMeters + " 公尺");
+                    if (isVibrationEnabled) {
+                        triggerMiBandVibration(); //呼叫手環
+                    }
+                })
+        );
+        signalPM.start();
+    }
+
 }
 
