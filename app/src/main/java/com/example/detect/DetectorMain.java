@@ -22,6 +22,7 @@ import java.nio.channels.FileChannel;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Collections;
 
 public class DetectorMain {
     private static final String TAG = "DetectorMain";
@@ -30,6 +31,7 @@ public class DetectorMain {
 
     private final Interpreter interpreter;
     private final List<String> labels;
+
     private final String modelType;
 
     // --- 重用緩衝 ---
@@ -127,6 +129,7 @@ public class DetectorMain {
 
         if (modelType.equals("All")) {
             Log.d(TAG, "Model output shape: " + Arrays.toString(shape));
+
             int batch = shape[0];
             int numBoxes = shape[1];
             int numElements = shape[2];
