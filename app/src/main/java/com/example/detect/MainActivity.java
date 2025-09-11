@@ -16,8 +16,6 @@ import android.location.LocationListener;
 import android.location.LocationManager;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.VibrationEffect;
-import android.os.Vibrator;
 import android.util.Log;
 import android.view.Display;
 import android.view.LayoutInflater;
@@ -43,9 +41,6 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
 import androidx.core.content.ContextCompat;
-import android.util.Rational;
-import androidx.camera.core.ViewPort;
-import androidx.camera.core.UseCaseGroup;
 
 
 import com.example.detect.model.ReminderRequest;
@@ -56,7 +51,6 @@ import java.util.Map;
 import java.util.HashMap;
 import java.nio.ByteBuffer;
 import java.io.IOException;
-import java.util.Arrays;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.concurrent.ExecutionException;
@@ -70,12 +64,10 @@ import retrofit2.Response;
 import android.graphics.ImageFormat;
 
 import android.graphics.YuvImage;
-import android.Manifest;
 
 import org.opencv.core.Size;
 import org.opencv.android.Utils;
 import org.opencv.core.Core;
-import org.opencv.core.CvType;
 import org.opencv.core.Mat;
 import org.opencv.core.MatOfPoint;
 import org.opencv.core.Scalar;
@@ -166,6 +158,10 @@ public class MainActivity extends AppCompatActivity {
     // 多幀投票（讓顏色更穩）
     private int frameIndex = 0;                       // 逐幀累加
     private static final int TRACK_TTL = 10;          // 追蹤幀數存活
+    private final android.graphics.Canvas rotateCanvas = new android.graphics.Canvas();
+
+    private Bitmap tileBmp;
+    private final android.graphics.Canvas tileCanvas = new android.graphics.Canvas();
 
 
     private static class TLTrack {
@@ -217,6 +213,8 @@ public class MainActivity extends AppCompatActivity {
     private final java.util.concurrent.atomic.AtomicBoolean analyzing = new java.util.concurrent.atomic.AtomicBoolean(false);
     private long lastAnalyzeMs = 0;
     private static final long MIN_INTERVAL_MS = 66; // ~15 FPS，可依機型調整
+
+    private Bitmap rotatedBmp;
 
 
     @Override
@@ -548,6 +546,7 @@ public class MainActivity extends AppCompatActivity {
         androidx.camera.core.ImageProxy.PlaneProxy plane = image.getPlanes()[0];
         int w = image.getWidth(), h = image.getHeight();
 
+        // --- 從 buffer 填入可重用 bmp ---
         Bitmap bmp = reusableBmp.get();
         if (bmp == null || bmp.getWidth() != w || bmp.getHeight() != h) {
             bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
@@ -557,13 +556,44 @@ public class MainActivity extends AppCompatActivity {
         buf.rewind();
         bmp.copyPixelsFromBuffer(buf);
 
+        // --- 無需旋轉就直接回傳 ---
         int rotation = image.getImageInfo().getRotationDegrees();
-        if (rotation != 0) {
-            Matrix m = new Matrix();
-            m.postRotate(rotation);
-            bmp = Bitmap.createBitmap(bmp, 0, 0, w, h, m, true);
+        if (rotation == 0) return bmp;
+
+        // --- 建立或重用 rotatedBmp（注意 90/270 尺寸互換）---
+        int rw = (rotation == 90 || rotation == 270) ? h : w;
+        int rh = (rotation == 90 || rotation == 270) ? w : h;
+        if (rotatedBmp == null || rotatedBmp.getWidth() != rw || rotatedBmp.getHeight() != rh) {
+            rotatedBmp = Bitmap.createBitmap(rw, rh, Bitmap.Config.ARGB_8888);
+            rotateCanvas.setBitmap(rotatedBmp);
         }
-        return bmp;
+
+        // --- 正確的旋轉 + 平移矩陣，避免裁切 ---
+        Matrix m = new Matrix();
+        switch (rotation) {
+            case 90:
+                m.setRotate(90);
+                m.postTranslate(h, 0);     // 把旋轉後的圖搬回可見區
+                break;
+            case 180:
+                m.setRotate(180);
+                m.postTranslate(w, h);
+                break;
+            case 270:
+                m.setRotate(270);
+                m.postTranslate(0, w);
+                break;
+            default:
+                // 其他角度很少見，但保底
+                m.setRotate(rotation, w / 2f, h / 2f);
+                break;
+        }
+
+        // 清空畫布並把來源畫到 rotatedBmp（重用，無配置）
+        rotateCanvas.drawColor(0, android.graphics.PorterDuff.Mode.CLEAR);
+        rotateCanvas.drawBitmap(bmp, m, null);
+
+        return rotatedBmp;
     }
 
     private Bitmap imageToBitmap(ImageProxy image) {
@@ -1227,6 +1257,14 @@ public class MainActivity extends AppCompatActivity {
     private List<DetectorMain.Recognition> detectTiled(Bitmap src, int cols, int rows, int overlap) {
         int W = src.getWidth(), H = src.getHeight();
         int tileW = W / cols, tileH = H / rows;
+
+        // 準備或重用 tileBmp（模型輸入大小 = w×h）
+        if (tileBmp == null || tileBmp.getWidth() != tileW + 2*overlap || tileBmp.getHeight() != tileH + 2*overlap) {
+            // 這裡用「最大可能」尺寸避免反覆重配
+            tileBmp = Bitmap.createBitmap(tileW + 2*overlap, tileH + 2*overlap, Bitmap.Config.ARGB_8888);
+            tileCanvas.setBitmap(tileBmp);
+        }
+
         List<DetectorMain.Recognition> all = new ArrayList<>();
 
         for (int r = 0; r < rows; r++) {
@@ -1235,15 +1273,23 @@ public class MainActivity extends AppCompatActivity {
                 int y0 = Math.max(0, r * tileH - overlap);
                 int x1 = Math.min(W, (c + 1) * tileW + overlap);
                 int y1 = Math.min(H, (r + 1) * tileH + overlap);
-                int w = x1 - x0, h = y1 - y0;
-                if (w <= 0 || h <= 0) continue;
+                if (x1 <= x0 || y1 <= y0) continue;
 
-                Bitmap tile = Bitmap.createBitmap(src, x0, y0, w, h);
-                List<DetectorMain.Recognition> part = detector.detect(tile, w, h);
+                // 把原圖子區塊拉到 tileBmp 的 (0,0)-(w,h)
+                android.graphics.Rect srcRect = new android.graphics.Rect(x0, y0, x1, y1);
+                android.graphics.Rect dstRect = new android.graphics.Rect(0, 0, x1 - x0, y1 - y0);
 
+                // 清空並拷貝
+                tileCanvas.drawColor(0, android.graphics.PorterDuff.Mode.CLEAR);
+                tileCanvas.drawBitmap(src, srcRect, dstRect, null);
+
+                // 推論：直接用 tileBmp（寬高就是 dstRect）
+                List<DetectorMain.Recognition> part = detector.detect(tileBmp, dstRect.width(), dstRect.height());
+
+                // 映回原圖座標
                 for (DetectorMain.Recognition rec : part) {
                     RectF b = new RectF(rec.getLocation());
-                    b.offset(x0, y0);           // 映回原圖
+                    b.offset(x0, y0);
                     rec.setLocation(b);
                     all.add(rec);
                 }
