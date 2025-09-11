@@ -29,7 +29,6 @@ import android.widget.RadioGroup;
 import android.widget.TextView;
 import android.widget.Toast;
 import androidx.appcompat.app.AlertDialog;
-
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.SwitchCompat;
@@ -46,12 +45,9 @@ import androidx.core.content.ContextCompat;
 import android.util.Rational;
 import androidx.camera.core.ViewPort;
 import androidx.camera.core.UseCaseGroup;
-
-
 import com.example.detect.model.ReminderRequest;
 import com.example.detect.model.SensitivityRequest;
 import com.google.common.util.concurrent.ListenableFuture;
-
 import java.util.Map;
 import java.util.HashMap;
 import java.nio.ByteBuffer;
@@ -62,16 +58,11 @@ import java.util.ArrayList;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-
 import retrofit2.Call;
 import retrofit2.Callback;
 import retrofit2.Response;
-
 import android.graphics.ImageFormat;
-
 import android.graphics.YuvImage;
-import android.Manifest;
-
 import org.opencv.core.Size;
 import org.opencv.android.Utils;
 import org.opencv.core.Core;
@@ -80,27 +71,20 @@ import org.opencv.core.Mat;
 import org.opencv.core.MatOfPoint;
 import org.opencv.core.Scalar;
 import org.opencv.imgproc.Imgproc;
-
 import java.io.ByteArrayOutputStream;
-
 import android.speech.tts.TextToSpeech;
-
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import org.opencv.android.OpenCVLoader;
-
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import android.os.Handler;
 import android.os.Looper;
-
 import android.annotation.SuppressLint;
 import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothGattCharacteristic;
 import android.bluetooth.BluetoothManager;
 import android.bluetooth.le.BluetoothLeScanner;
-
-
 import androidx.camera.camera2.interop.Camera2CameraInfo;
 import android.hardware.camera2.CameraCharacteristics;
 import android.util.SizeF;
@@ -130,20 +114,17 @@ public class MainActivity extends AppCompatActivity {
     private long lastVibrationTime = 0;
     private long lastSpeechTime = 0;
     private TextToSpeech textToSpeech;
-
     private BluetoothAdapter bluetoothAdapter;
     private BluetoothLeScanner bluetoothLeScanner;
     private BluetoothGatt bluetoothGatt;
     private final String targetDeviceName = "Mi Smart Band"; // 可改成你實際的裝置名稱
     private static final int REQUEST_BLUETOOTH_PERMISSIONS = 1001;
-
     private androidx.camera.core.Camera camera;
 
     // ---- Long-distance TL tuning ----
     private static final float INITIAL_ZOOM = 1.8f;   // 綁定相機後套用的預設變焦
     private static final int   TARGET_W     = 1920;   // 影像分析輸入寬
     private static final int   TARGET_H     = 1080;   // 影像分析輸入高
-
     private static final float TL_CONF   = 0.28f;     // 交通號誌專屬信心門檻（遠距離小物件通常較低）
     private static final float IOU_NMS   = 0.80f;     // NMS IoU
     private static final int   MIN_BOX_PX = 8;        // 最小框像素，避免噪聲
@@ -167,7 +148,6 @@ public class MainActivity extends AppCompatActivity {
     private int frameIndex = 0;                       // 逐幀累加
     private static final int TRACK_TTL = 10;          // 追蹤幀數存活
 
-
     private static class TLTrack {
         RectF box;
         int seenFrame;
@@ -178,10 +158,8 @@ public class MainActivity extends AppCompatActivity {
         int hold   = 0;           // 已確認後的保留幀數
     }
     private final List<TLTrack> tlTracks = new ArrayList<>();
-
     private ExecutorService cameraExecutor;
     private Handler ui;
-
     private static final boolean TL_DEBUG_LOG   = true;   // 想看細節就 true
     private static final Scalar LOWER_RED1 = new Scalar(0, 70, 50);
     private static final Scalar UPPER_RED1 = new Scalar(10, 255, 255);
@@ -199,7 +177,6 @@ public class MainActivity extends AppCompatActivity {
     public static final float H_TL_LAMP = 0.30f;
     private float calibScale = 1.0f;
     private float lastTLHeightPx = -1f;
-
     private float currentScale = 1f;
     public float getCurrentScale() { return currentScale; }
     // 影像座標還原需要用到
@@ -217,7 +194,6 @@ public class MainActivity extends AppCompatActivity {
     private final java.util.concurrent.atomic.AtomicBoolean analyzing = new java.util.concurrent.atomic.AtomicBoolean(false);
     private long lastAnalyzeMs = 0;
     private static final long MIN_INTERVAL_MS = 66; // ~15 FPS，可依機型調整
-
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -296,18 +272,18 @@ public class MainActivity extends AppCompatActivity {
 
     }
 
-
-
     private boolean hasBtConnect() {
         return Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
                 ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT)
                         == PackageManager.PERMISSION_GRANTED;
     }
+
     private boolean hasBtScan() {
         return Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
                 ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN)
                         == PackageManager.PERMISSION_GRANTED;
     }
+
     private void requestBtPermsIfNeeded() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             ArrayList<String> req = new ArrayList<>();
@@ -350,7 +326,6 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-
     private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationManager nm = getSystemService(NotificationManager.class);
@@ -381,7 +356,6 @@ public class MainActivity extends AppCompatActivity {
                     + " sound=" + (v!=null && v.getSound()!=null));
         }
     }
-
 
     private void startCamera() {
         previewView.post(() -> {
@@ -462,7 +436,10 @@ public class MainActivity extends AppCompatActivity {
                             }
 
                             // ✓ 自適應平鋪：每隔一幀才做 2×2，另一幀跑全圖，降低 GC
-                            boolean useTiles = (frameIndex & 1) == 0; // 偶數幀做平鋪
+                            boolean useTiles = false; // 偶數幀做平鋪
+                            if ((frameIndex & 1) == 0 && lastTLHeightPx > 0 && lastTLHeightPx < 20) { // 門檻可調
+                                useTiles = true;
+                            }
                             List<DetectorMain.Recognition> detAll = useTiles
                                     ? detectTiled(bitmap, TILE_COLS, TILE_ROWS, TILE_OVERLAP)
                                     : detector.detect(bitmap, bitmap.getWidth(), bitmap.getHeight());
@@ -482,22 +459,39 @@ public class MainActivity extends AppCompatActivity {
 
                             List<DetectorMain.Recognition> kept = nmsByClass(filtered, IOU_NMS);
 
-                            // 只對較大的紅綠燈 & 每隔一幀才判色（再減負載）
+                            // ===== 判斷燈號顏色（降頻 + 只對最大幾個做） =====
                             float maxTlH = -1f;
-                            boolean doColorThisFrame = (frameIndex & 1) == 0;
+
+                            // 先收集所有紅綠燈
+                            List<DetectorMain.Recognition> tls = new ArrayList<>();
                             for (DetectorMain.Recognition r : kept) {
                                 if ("traffic_light".equals(r.getTitle())) {
-                                    if ("traffic_light".equals(r.getTitle())) {
-                                        // 這裡 r.getLocation() 仍是「影像座標」，正確！等會兒再 map 到畫面座標
-                                        String c = detectTrafficLightColor(bitmap, r.getLocation()); // 你的 HSV 比例法
-                                        r.setColor(c);
-                                        Log.d("DEBUG_TL", "TrafficLight color = " + c);
-                                    }
-
+                                    tls.add(r);
+                                    // 順便記錄最大高度，供後面自適應用
                                     if (r.getLocation().height() > maxTlH) maxTlH = r.getLocation().height();
                                 }
                             }
                             if (maxTlH > 0) lastTLHeightPx = maxTlH;
+
+                            // 依 bbox 高度由大到小排序（大的通常比較近、比較清楚）
+                            tls.sort((a, b) -> Float.compare(b.getLocation().height(), a.getLocation().height()));
+
+                            // 只挑最大的 1～2 個做判色（避免每幀大量 OpenCV 計算）
+                            int maxColorCheck = Math.min(2, tls.size());
+
+                            // 每 3 幀才做一次判色（降頻，降低延遲）
+                            boolean doColorThisFrame = (frameIndex % 3 == 0);
+
+                            if (doColorThisFrame) {
+                                for (int i = 0; i < maxColorCheck; i++) {
+                                    DetectorMain.Recognition r = tls.get(i);
+                                    String c = detectTrafficLightColor(bitmap, r.getLocation());
+                                    r.setColor(c);
+                                    // 可選：Log 診斷
+                                    // Log.d("DEBUG_TL", "TrafficLight color = " + c + " bbox=" + r.getLocation());
+                                }
+                            }
+                            // 其餘較小的燈，本幀先不判；顏色會在之後幀慢慢補上
 
                             // 映射到 Overlay 座標（保留你原本距離/顯示邏輯）
                             int imgW = bitmap.getWidth(), imgH = bitmap.getHeight();
@@ -544,8 +538,8 @@ public class MainActivity extends AppCompatActivity {
     private final java.util.concurrent.atomic.AtomicReference<Bitmap> reusableBmp =
             new java.util.concurrent.atomic.AtomicReference<>();
 
-    private Bitmap imageToBitmapFast(androidx.camera.core.ImageProxy image) {
-        androidx.camera.core.ImageProxy.PlaneProxy plane = image.getPlanes()[0];
+    private Bitmap imageToBitmapFast(ImageProxy image) {
+        ImageProxy.PlaneProxy plane = image.getPlanes()[0];
         int w = image.getWidth(), h = image.getHeight();
 
         Bitmap bmp = reusableBmp.get();
@@ -553,10 +547,11 @@ public class MainActivity extends AppCompatActivity {
             bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
             reusableBmp.set(bmp);
         }
-        java.nio.ByteBuffer buf = plane.getBuffer();
+        ByteBuffer buf = plane.getBuffer();
         buf.rewind();
         bmp.copyPixelsFromBuffer(buf);
 
+        // ✅ 要把像素旋轉到正向（對齊 PreviewView）
         int rotation = image.getImageInfo().getRotationDegrees();
         if (rotation != 0) {
             Matrix m = new Matrix();
@@ -655,7 +650,6 @@ public class MainActivity extends AppCompatActivity {
         }
         return out;
     }
-
 
     private void startLocationUpdates() {
         locationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
@@ -874,7 +868,6 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-
     private void processPedestrianLogic(List<DetectorMain.Recognition> recognitions) {
         boolean hasPerson = false;
         boolean hasCrosswalk = false;
@@ -962,8 +955,6 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-
-
     private String detectTrafficLightColor(Bitmap fullBmp, RectF rawBox) {
         Mat mat = new Mat(), mask = new Mat(), maskLight = new Mat(), kernel = null;
         List<Mat> hsv = new ArrayList<>();
@@ -991,7 +982,6 @@ public class MainActivity extends AppCompatActivity {
             cropSmall.recycle();
             Imgproc.cvtColor(mat, mat, Imgproc.COLOR_RGBA2BGR);
             Imgproc.cvtColor(mat, mat, Imgproc.COLOR_BGR2HSV);
-
 
             // 3) 拆 H/S/V
             Core.split(mat, hsv);
@@ -1129,8 +1119,6 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-
-
     private int getMaxVerticalProjection(Mat binaryMask) {
         int rows = binaryMask.rows();
         int cols = binaryMask.cols();
@@ -1158,6 +1146,9 @@ public class MainActivity extends AppCompatActivity {
         }
         if (cameraExecutor != null && !cameraExecutor.isShutdown()) {
             cameraExecutor.shutdown();
+        }
+        if (detector != null) {
+            try { detector.close(); } catch (Throwable ignore) {}
         }
         super.onDestroy();
     }
@@ -1239,13 +1230,16 @@ public class MainActivity extends AppCompatActivity {
                 if (w <= 0 || h <= 0) continue;
 
                 Bitmap tile = Bitmap.createBitmap(src, x0, y0, w, h);
-                List<DetectorMain.Recognition> part = detector.detect(tile, w, h);
-
-                for (DetectorMain.Recognition rec : part) {
-                    RectF b = new RectF(rec.getLocation());
-                    b.offset(x0, y0);           // 映回原圖
-                    rec.setLocation(b);
-                    all.add(rec);
+                try {
+                    List<DetectorMain.Recognition> part = detector.detect(tile, w, h);
+                    for (DetectorMain.Recognition rec : part) {
+                        RectF b = new RectF(rec.getLocation());
+                        b.offset(x0, y0);  // 映回原圖
+                        rec.setLocation(b);
+                        all.add(rec);
+                    }
+                } finally {
+                    tile.recycle(); // ✅ 這行很重要，避免記憶體壓力
                 }
             }
         }
@@ -1273,7 +1267,6 @@ public class MainActivity extends AppCompatActivity {
         return out;
     }
 
-
     private List<DetectorMain.Recognition> mapToViewCoordinates(
             List<DetectorMain.Recognition> imageResults,
             float viewW, float viewH, float imgW, float imgH) {
@@ -1300,6 +1293,7 @@ public class MainActivity extends AppCompatActivity {
         if ("green".equals(c)) return 3;
         return 0;
     }
+
     private String colorStr(int idx) {
         switch (idx) {
             case 1: return "red";
@@ -1308,6 +1302,7 @@ public class MainActivity extends AppCompatActivity {
             default: return "unknown";
         }
     }
+
     private float iou(RectF a, RectF b) {
         float left = Math.max(a.left, b.left);
         float top = Math.max(a.top, b.top);
@@ -1373,8 +1368,6 @@ public class MainActivity extends AppCompatActivity {
 
         return colorStr(best.stable);
     }
-
-
 
     private float estimateDistanceByHeightPx(float boxHeightPx, float realHeightM) {
         if (fPxY <= 0 || boxHeightPx <= 0) return -1f;
