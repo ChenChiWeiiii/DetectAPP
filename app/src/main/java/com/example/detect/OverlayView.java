@@ -8,7 +8,6 @@ import android.graphics.RectF;
 import android.util.AttributeSet;
 import android.view.View;
 import android.util.Log;
-
 import java.util.ArrayList;
 import java.util.List;
 
@@ -29,7 +28,6 @@ public class OverlayView extends View {
         boxPaint.setColor(Color.RED);
         boxPaint.setStyle(Paint.Style.STROKE);
         boxPaint.setStrokeWidth(6.0f);
-
         textPaint = new Paint();
         textPaint.setColor(defaultTextColor);
         textPaint.setTextSize(50f);
@@ -134,4 +132,3 @@ public class OverlayView extends View {
         }
     }
 }
-
