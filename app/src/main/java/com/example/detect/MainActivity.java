@@ -70,7 +70,6 @@ import retrofit2.Response;
 import android.graphics.ImageFormat;
 
 import android.graphics.YuvImage;
-import android.Manifest;
 
 import org.opencv.core.Size;
 import org.opencv.android.Utils;
@@ -904,6 +903,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+
         if (requestCode == PERMISSION_CODE) {
             boolean camOk = false, locOk = false;
             for (int i = 0; i < permissions.length; i++) {
@@ -915,12 +915,11 @@ public class MainActivity extends AppCompatActivity {
                 }
             }
             if (camOk) startCamera();
-            if (locOk) startLocationUpdates();
+            if (locOk) {
+                startLocationUpdates();
+                startSignalProximity();   // 權限通過後啟動前方路口提醒
+            }
             return;
-        if (requestCode == PERMISSION_CODE && grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            startCamera();
-            startLocationUpdates();
-            startSignalProximity();
         }
 
         if (requestCode == REQUEST_BLUETOOTH_PERMISSIONS) {
@@ -935,12 +934,12 @@ public class MainActivity extends AppCompatActivity {
             if (granted) {
                 Log.d("MiBand", "藍牙權限已授權，開始掃描");
                 ensureMiBandConnected();
-                //scanAndConnectMiBand();
             } else {
                 Toast.makeText(this, "未授權藍牙權限，無法連線手環", Toast.LENGTH_SHORT).show();
             }
         }
     }
+
 
     private boolean isLocationEnabled() {
         LocationManager lm = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
