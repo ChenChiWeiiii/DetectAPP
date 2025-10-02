@@ -227,15 +227,15 @@ public class MainActivity extends AppCompatActivity {
     private static final float OSM_QUERY_MIN_MOVE_M = 120f;        // 位移 > 120m 才查
     private static final long  OSM_QUERY_MIN_INTERVAL_MS = 20_000; // 或每 20 秒一次
     private static final int DEFAULT_OSM_SPEED_KMH = 50;
-    private static final int MAX_LIMIT_CAP_KMH = 50;
+
     private float lastQueryLat = Float.NaN, lastQueryLng = Float.NaN;
     private long lastQueryMs = 0L;
     // 目前取得到的速限（km/h），null = 未知
     private Integer currentSpeedLimitKmh = DEFAULT_OSM_SPEED_KMH;
     // 超速容忍係數（避免 GPS 抖動）
-    private static final float OVERSPEED_TOLERANCE = 1.10f; // > 限速 10% 才提醒
-    private static final long NOTIF_COOLDOWN_MS = 20_000; // 20s
-    private static final long OVERSPEED_HOLD_MS = 3_000;  // 連續超速 3s 才提醒
+    private static final float OVERSPEED_TOLERANCE = 1.01f;
+    private static final long NOTIF_COOLDOWN_MS = 10_000;
+    private static final long OVERSPEED_HOLD_MS = 0_000;
     private long lastNotifMs = 0L;
     private long overspeedSinceMs = 0L;
     // 若還沒有 lastLocation，建一個欄位（你稍早已加）
@@ -323,27 +323,6 @@ public class MainActivity extends AppCompatActivity {
         //requestBluetoothPermissions(); // 呼叫藍牙權限請
         findViewById(R.id.btnSettings).setOnClickListener(v -> showSettingsDialog());
 
-        speedMgr = new SpeedAlertManager(
-                this,
-                new DummySpeedLimitProvider(),
-                new SpeedAlertManager.Notifier() {
-                    @Override public void onOverspeed(int speed, int limit) {
-                        // 用你現有的提醒
-                        speakOnce(String.format(java.util.Locale.TAIWAN,
-                                "超速提醒，目前 %d，限速 %d，請減速", speed, limit));
-                        triggerMiBandVibration();
-                        sendAlertNotification("超速提醒",
-                                String.format(java.util.Locale.TAIWAN, "目前 %d km/h，限速 %d", speed, limit));
-                    }
-                    @Override public void onUpdate(int speed, Integer limit) {
-                        // 顯示當前時速 + 限速（不改 layout，直接沿用 tvSpeed）
-                        runOnUiThread(() -> {
-                            String l = (limit == null) ? "—" : String.valueOf(limit);
-                            tvSpeed.setText(String.format("時速：%d km/h   限速：%s", speed, l));
-                        });
-                    }
-                }
-        );
     }
 
     private void initOverpassApi() {
@@ -573,17 +552,17 @@ public class MainActivity extends AppCompatActivity {
                                 }
                             }
 
-                            if (camera != null && maxTlH > 0) {
-                                float err = TL_TARGET_HEIGHT_PX - maxTlH;
-                                if (Math.abs(err) > 4f) { // 有明顯偏差才調
-                                    float z = currentLinearZoom + Math.signum(err) * ZOOM_STEP;
-                                    z = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
-                                    if (Math.abs(z - currentLinearZoom) >= 0.01f) {
-                                        currentLinearZoom = z;
-                                        camera.getCameraControl().setLinearZoom(z);
-                                    }
-                                }
-                            }
+//                            if (camera != null && maxTlH > 0) {
+//                                float err = TL_TARGET_HEIGHT_PX - maxTlH;
+//                                if (Math.abs(err) > 4f) { // 有明顯偏差才調
+//                                    float z = currentLinearZoom + Math.signum(err) * ZOOM_STEP;
+//                                    z = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
+//                                    if (Math.abs(z - currentLinearZoom) >= 0.01f) {
+//                                        currentLinearZoom = z;
+//                                        camera.getCameraControl().setLinearZoom(z);
+//                                    }
+//                                }
+//                            }
 
                             if (maxTlH > 0) lastTLHeightPx = maxTlH;
 
@@ -852,7 +831,9 @@ public class MainActivity extends AppCompatActivity {
             Log.e("SpeedLimit", "LOC tick");
             lastLocation = location;
             float speedKmh = location.getSpeed() * 3.6f;
-            updateSpeedUi(speedKmh, currentSpeedLimitKmh);
+
+            updateSpeedUi(speedKmh);
+
             maybeAlertOverspeed(speedKmh, currentSpeedLimitKmh);
             Log.e("OSMSpeed", "call maybeFetch from onLocationChanged");
             maybeFetchAndApplySpeedLimit(location);
@@ -1654,56 +1635,64 @@ public class MainActivity extends AppCompatActivity {
         lastQueryLat = lat;
         lastQueryLng = lng;
 
-        // 以 70m 半徑找有 maxspeed 的道路
+        // ✅ 重點：同時抓 highway 與 maxspeed（最近的前幾筆）
         String q = "[out:json][timeout:8];"
-                + "way(around:70," + lat + "," + lng + ")[\"highway\"][\"maxspeed\"];"
-                + "out tags 20;";
+                + "way(around:70," + lat + "," + lng + ")[\"highway\"];"
+                + "out tags center 10;"; // out center 會帶回中心點，通常依距離排序
+
         Log.e("OSMSpeed", "QUERY=" + q);
 
-        if (overpassApi == null) {
-            Log.e("OSMSpeed", "overpassApi is null → init");
-            initOverpassApi();
-        }
+        if (overpassApi == null) initOverpassApi();
 
         overpassApi.query(q).enqueue(new retrofit2.Callback<OverpassResp>() {
             @Override public void onResponse(Call<OverpassResp> call, Response<OverpassResp> resp) {
                 OverpassResp body = resp.body();
                 if (!resp.isSuccessful() || body == null) {
                     Log.e("OSMSpeed", "HTTP=" + resp.code() + " body=" + body);
-                    // 只在「查不到資料」要用 50 的話，這裡不要動 currentSpeedLimitKmh。
                     return;
                 }
 
-                Integer best = null;
+                Integer decided = null;
+
                 if (body.elements != null) {
+                    // 依回傳順序（通常最近）挑第一個能決定速限的
                     for (OverpassResp.Element el : body.elements) {
                         if (el == null || el.tags == null) continue;
-                        Integer v = pickMaxspeedFromTags(el.tags); // 你原本的解析函式
-                        if (v != null) { best = v; break; }
+
+                        // 1) 有 maxspeed → 直接用
+                        Integer v = pickMaxspeedFromTags(el.tags);
+                        if (v != null) { decided = v; break; }
+
+                        // 2) 沒有 maxspeed → 用 highway 類型推估
+                        String hw = el.tags.get("highway");
+                        Integer guess = HighwaySpeedTable.fromHighway(hw);
+                        if (guess != null) { decided = guess; break; }
                     }
                 }
 
-                if (best == null) {
-                    // ← OSM 沒有速限資料，改用 50
-                    best = DEFAULT_OSM_SPEED_KMH;
-                    Log.e("OSMSpeed", "no OSM maxspeed → fallback " + best);
-                }
-                best = Math.min(best, MAX_LIMIT_CAP_KMH);
-                currentSpeedLimitKmh = best;
+                // 最後兜底
+                if (decided == null) decided = DEFAULT_OSM_SPEED_KMH; // 仍給保守 50
+
+                // ⚠️ 不再硬性 cap 在 50；若你想保險，可 cap 在 90
+                // decided = Math.min(decided, 90);
+
+                currentSpeedLimitKmh = decided;
                 Log.e("OSMSpeed", "SET limit=" + currentSpeedLimitKmh);
 
                 if (lastLocation != null) {
                     float sp = lastLocation.getSpeed() * 3.6f;
-                    updateSpeedUi(sp, currentSpeedLimitKmh);
+                    updateSpeedUi(sp);
                     maybeAlertOverspeed(sp, currentSpeedLimitKmh);
                 }
             }
 
-            @Override public void onFailure(retrofit2.Call<OverpassResp> call, Throwable t) {
+            @Override public void onFailure(Call<OverpassResp> call, Throwable t) {
                 Log.e("OSMSpeed", "FAIL", t);
+                // 保留原速限；或你也可設定成 DEFAULT_OSM_SPEED_KMH
             }
         });
     }
+
 
     private void fetchOsmMaxspeed(final double lat, final double lon, final int radiusM,
                                   final java.util.concurrent.atomic.AtomicBoolean triedWider) {
@@ -1737,7 +1726,7 @@ public class MainActivity extends AppCompatActivity {
 
                 if (lastLocation != null) {
                     float sp = lastLocation.getSpeed() * 3.6f;
-                    updateSpeedUi(sp, currentSpeedLimitKmh);
+                    updateSpeedUi(sp);
                     maybeAlertOverspeed(sp, currentSpeedLimitKmh);
                 }
             }
@@ -1834,13 +1823,6 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    /** 先回固定 50 km/h 讓流程跑起來；之後把這裡換成：呼叫你們後端 / 商用 API + 本地快取 */
-    private static class DummySpeedLimitProvider implements SpeedAlertManager.SpeedLimitProvider {
-        @Override
-        public void getSpeedLimitAsync(double lat, double lon, float heading, Callback cb) {
-            cb.onResult(50);
-        }
-    }
     interface OverpassApi {
         @retrofit2.http.GET("api/interpreter")
         retrofit2.Call<OverpassResp> query(@retrofit2.http.Query("data") String q);
@@ -1852,11 +1834,36 @@ public class MainActivity extends AppCompatActivity {
         java.util.List<Element> elements;
     }
 
-    // === UI 顯示「時速 + 限速」 ===限速：%d km/h, limitKmh
-    private void updateSpeedUi(float speedKmh, Integer limitKmh) {
+    // === UI 顯示「時速」 ===
+    private void updateSpeedUi(float speedKmh) {
         tvSpeed.setText(String.format(java.util.Locale.TAIWAN, "時速：%.1f km/h ", speedKmh));
     }
 
+    public static final class HighwaySpeedTable {
+        private HighwaySpeedTable() {}
+        public static Integer fromHighway(String highway) {
+
+            if (highway == null) return 50; // 最後兜底
+            switch (highway) {
+                case "motorway":
+                    return null;
+                case "trunk":
+                case "primary":
+                case "secondary":
+                case "tertiary":
+                    return 50;
+                case "residential":
+                case "unclassified":
+                    return 40;
+                case "service":
+                case "track":
+                case "living_street":
+                    return 30;
+                default:
+                    return 50;
+            }
+        }
+    }
     // === 超速提醒（沿用你原本的語音/通知） ===
     private void maybeAlertOverspeed(float speedKmh, Integer limitKmh) {
         if (limitKmh == null || limitKmh <= 0) return;
@@ -1874,7 +1881,7 @@ public class MainActivity extends AppCompatActivity {
                         "超速提醒，目前 %.0f，限速 %d，請減速", speedKmh, limitKmh));
                 if (isVibrationEnabled) triggerMiBandVibration();
                 sendAlertNotification("超速提醒",
-                        String.format(java.util.Locale.TAIWAN, "目前 %.0f km/h，限速 %d", speedKmh, limitKmh));
+                        String.format(java.util.Locale.TAIWAN, "目前 %.0f km/h，限速 %d km/h，請減速", speedKmh, limitKmh));
             }
         } else {
             overspeedSinceMs = 0L; // 一降速就重算
