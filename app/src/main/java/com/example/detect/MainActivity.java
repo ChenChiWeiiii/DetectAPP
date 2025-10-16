@@ -29,7 +29,6 @@ import android.widget.RadioGroup;
 import android.widget.TextView;
 import android.widget.Toast;
 import androidx.appcompat.app.AlertDialog;
-
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.SwitchCompat;
@@ -49,7 +48,6 @@ import androidx.camera.core.UseCaseGroup;
 import com.example.detect.model.ReminderRequest;
 import com.example.detect.model.SensitivityRequest;
 import com.google.common.util.concurrent.ListenableFuture;
-
 import java.util.Map;
 import java.util.HashMap;
 import java.nio.ByteBuffer;
@@ -60,16 +58,11 @@ import java.util.ArrayList;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-
 import retrofit2.Call;
 import retrofit2.Callback;
 import retrofit2.Response;
-
 import android.graphics.ImageFormat;
-
 import android.graphics.YuvImage;
-import android.Manifest;
-
 import org.opencv.core.Size;
 import org.opencv.android.Utils;
 import org.opencv.core.Core;
@@ -78,27 +71,20 @@ import org.opencv.core.Mat;
 import org.opencv.core.MatOfPoint;
 import org.opencv.core.Scalar;
 import org.opencv.imgproc.Imgproc;
-
 import java.io.ByteArrayOutputStream;
-
 import android.speech.tts.TextToSpeech;
-
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import org.opencv.android.OpenCVLoader;
-
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import android.os.Handler;
 import android.os.Looper;
-
 import android.annotation.SuppressLint;
 import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothGattCharacteristic;
 import android.bluetooth.BluetoothManager;
 import android.bluetooth.le.BluetoothLeScanner;
-
-
 import androidx.camera.camera2.interop.Camera2CameraInfo;
 import android.hardware.camera2.CameraCharacteristics;
 import android.util.SizeF;
@@ -107,13 +93,14 @@ import androidx.camera.camera2.interop.ExperimentalCamera2Interop;
 import android.media.AudioAttributes;
 import android.net.Uri;
 import android.provider.Settings;
-
 import com.example.detect.geo.SignalPoint;
 import com.example.detect.geo.SignalRepository;
 import com.example.detect.geo.SignalProximityManager;
-
 import retrofit2.Retrofit;
 import retrofit2.converter.gson.GsonConverterFactory;
+import androidx.camera.core.MeteringPoint;
+import androidx.camera.core.MeteringPointFactory;
+import androidx.camera.core.FocusMeteringAction;
 
 @OptIn(markerClass = ExperimentalCamera2Interop.class)
 public class MainActivity extends AppCompatActivity {
@@ -166,10 +153,10 @@ public class MainActivity extends AppCompatActivity {
     private static final int    COLOR_CONFIRM_FRAMES = 3;  // 變色需連續 N 幀
     private static final int    COLOR_HOLD_FRAMES    = 8;  // 確認後至少維持 M 幀
 
-    // 平鋪推論（不換模型也能增距）
-    private static final int TILE_COLS = 2;           // 先用 2×2；效能足夠再升 3×3
-    private static final int TILE_ROWS = 2;
-    private static final int TILE_OVERLAP = 40;       // 邊緣重疊，避免切到一半
+    // 平鋪推論（自適應 2×2 / 3×3）
+    private static final int TILE_OVERLAP = 40;
+    private static final int TILE_COLS_L1 = 2, TILE_ROWS_L1 = 2;
+    private static final int TILE_COLS_L2 = 3, TILE_ROWS_L2 = 3;
 
     // 多幀投票（讓顏色更穩）
     private int frameIndex = 0;                       // 逐幀累加
@@ -232,7 +219,6 @@ public class MainActivity extends AppCompatActivity {
 
     private Bitmap rotatedBmp;
 
-
     // ===== OSM Overpass =====
     private static final String OVERPASS_BASE_URL = "https://overpass-api.de/";
     private OverpassApi overpassApi;
@@ -241,29 +227,25 @@ public class MainActivity extends AppCompatActivity {
     private static final float OSM_QUERY_MIN_MOVE_M = 120f;        // 位移 > 120m 才查
     private static final long  OSM_QUERY_MIN_INTERVAL_MS = 20_000; // 或每 20 秒一次
     private static final int DEFAULT_OSM_SPEED_KMH = 50;
-    private static final int MAX_LIMIT_CAP_KMH = 50;
-
-
 
     private float lastQueryLat = Float.NaN, lastQueryLng = Float.NaN;
     private long lastQueryMs = 0L;
-
     // 目前取得到的速限（km/h），null = 未知
     private Integer currentSpeedLimitKmh = DEFAULT_OSM_SPEED_KMH;
-
-
     // 超速容忍係數（避免 GPS 抖動）
-    private static final float OVERSPEED_TOLERANCE = 1.10f; // > 限速 10% 才提醒
-    private static final long NOTIF_COOLDOWN_MS = 20_000; // 20s
-    private static final long OVERSPEED_HOLD_MS = 3_000;  // 連續超速 3s 才提醒
+    private static final float OVERSPEED_TOLERANCE = 1.01f;
+    private static final long NOTIF_COOLDOWN_MS = 10_000;
+    private static final long OVERSPEED_HOLD_MS = 0_000;
     private long lastNotifMs = 0L;
     private long overspeedSinceMs = 0L;
-
-
     // 若還沒有 lastLocation，建一個欄位（你稍早已加）
     private Location lastLocation;
 
-
+    private static final float TL_TARGET_HEIGHT_PX = 28f; // 希望紅綠燈至少這麼高
+    private static final float ZOOM_STEP = 0.04f;         // 每次微調
+    private static final float ZOOM_MIN = 0.0f;           // linearZoom 範圍 0~1
+    private static final float ZOOM_MAX = 1.0f;
+    private float currentLinearZoom = 0.35f; // 依機型微調，約 1.7~2.0x
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -311,9 +293,9 @@ public class MainActivity extends AppCompatActivity {
             startSignalProximity();
         } else {
             ActivityCompat.requestPermissions(this,
-                         new String[]{ Manifest.permission.CAMERA,
-                                               Manifest.permission.ACCESS_FINE_LOCATION },
-                         PERMISSION_CODE);}
+                    new String[]{ Manifest.permission.CAMERA,
+                            Manifest.permission.ACCESS_FINE_LOCATION },
+                    PERMISSION_CODE);}
 
         try {
             detector = new DetectorMain(getAssets(), "best_float16.tflite", "All");
@@ -341,35 +323,6 @@ public class MainActivity extends AppCompatActivity {
         //requestBluetoothPermissions(); // 呼叫藍牙權限請
         findViewById(R.id.btnSettings).setOnClickListener(v -> showSettingsDialog());
 
-
-
-        speedMgr = new SpeedAlertManager(
-                this,
-                new DummySpeedLimitProvider(),
-                new SpeedAlertManager.Notifier() {
-                    @Override public void onOverspeed(int speed, int limit) {
-                        // 用你現有的提醒
-                        speakOnce(String.format(java.util.Locale.TAIWAN,
-                                "超速提醒，目前 %d，限速 %d，請減速", speed, limit));
-                        triggerMiBandVibration();
-                        sendAlertNotification("超速提醒",
-                                String.format(java.util.Locale.TAIWAN, "目前 %d km/h，限速 %d", speed, limit));
-                    }
-                    @Override public void onUpdate(int speed, Integer limit) {
-                        // 顯示當前時速 + 限速（不改 layout，直接沿用 tvSpeed）
-                        runOnUiThread(() -> {
-                            String l = (limit == null) ? "—" : String.valueOf(limit);
-                            tvSpeed.setText(String.format("時速：%d km/h   限速：%s", speed, l));
-                        });
-                    }
-                }
-
-
-        );
-
-
-
-
     }
 
     private void initOverpassApi() {
@@ -385,11 +338,13 @@ public class MainActivity extends AppCompatActivity {
                 ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT)
                         == PackageManager.PERMISSION_GRANTED;
     }
+
     private boolean hasBtScan() {
         return Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
                 ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN)
                         == PackageManager.PERMISSION_GRANTED;
     }
+
     private void requestBtPermsIfNeeded() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             ArrayList<String> req = new ArrayList<>();
@@ -432,7 +387,6 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-
     private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationManager nm = getSystemService(NotificationManager.class);
@@ -463,7 +417,6 @@ public class MainActivity extends AppCompatActivity {
                     + " sound=" + (v!=null && v.getSound()!=null));
         }
     }
-
 
     private void startCamera() {
         previewView.post(() -> {
@@ -543,21 +496,40 @@ public class MainActivity extends AppCompatActivity {
                                 fPxY = (focalMm / sensorHeightMm) * bitmap.getHeight();
                             }
 
-                            // ✓ 自適應平鋪：每隔一幀才做 2×2，另一幀跑全圖，降低 GC
+                            /*// ✓ 自適應平鋪：每隔一幀才做 2×2，另一幀跑全圖，降低 GC
                             boolean useTiles = false; // 偶數幀做平鋪
                             if ((frameIndex & 1) == 0 && lastTLHeightPx > 0 && lastTLHeightPx < 20) { // 門檻可調
                                 useTiles = true;
                             }
                             List<DetectorMain.Recognition> detAll = useTiles
                                     ? detectTiled(bitmap, TILE_COLS, TILE_ROWS, TILE_OVERLAP)
+                                    : detector.detect(bitmap, bitmap.getWidth(), bitmap.getHeight());*/
+
+                            boolean useTiles = false;
+                            int cols = TILE_COLS_L1, rows = TILE_ROWS_L1;
+
+                            if ((frameIndex & 1) == 0 && lastTLHeightPx > 0) {
+                                if (lastTLHeightPx < 12) { // 更小 → 3x3
+                                    useTiles = true; cols = TILE_COLS_L2; rows = TILE_ROWS_L2;
+                                } else if (lastTLHeightPx < 20) { // 小 → 2x2
+                                    useTiles = true; cols = TILE_COLS_L1; rows = TILE_ROWS_L1;
+                                }
+                            }
+
+                            List<DetectorMain.Recognition> detAll = useTiles
+                                    ? detectTiled(bitmap, cols, rows, TILE_OVERLAP)
                                     : detector.detect(bitmap, bitmap.getWidth(), bitmap.getHeight());
 
                             // 交通號誌的門檻先過濾，降低後面 OpenCV 的負擔
                             List<DetectorMain.Recognition> filtered = new ArrayList<>();
                             for (DetectorMain.Recognition r : detAll) {
                                 if ("traffic_light".equals(r.getTitle())) {
-                                    if (r.getConfidence() >= TL_CONF &&
-                                            Math.min(r.getLocation().width(), r.getLocation().height()) >= MIN_BOX_PX) { // 稍微放大最小框
+                                    // 信心度要達標
+                                    if (r.getConfidence() >= TL_CONF) {
+                                        // 框太小就標記成「低強度」但仍然保留
+                                        if (Math.min(r.getLocation().width(), r.getLocation().height()) < MIN_BOX_PX) {
+                                            r.setColorStrength(0.2f); // 弱，後面投票需要更多幀
+                                        }
                                         filtered.add(r);
                                     }
                                 } else {
@@ -579,6 +551,19 @@ public class MainActivity extends AppCompatActivity {
                                     if (r.getLocation().height() > maxTlH) maxTlH = r.getLocation().height();
                                 }
                             }
+
+//                            if (camera != null && maxTlH > 0) {
+//                                float err = TL_TARGET_HEIGHT_PX - maxTlH;
+//                                if (Math.abs(err) > 4f) { // 有明顯偏差才調
+//                                    float z = currentLinearZoom + Math.signum(err) * ZOOM_STEP;
+//                                    z = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
+//                                    if (Math.abs(z - currentLinearZoom) >= 0.01f) {
+//                                        currentLinearZoom = z;
+//                                        camera.getCameraControl().setLinearZoom(z);
+//                                    }
+//                                }
+//                            }
+
                             if (maxTlH > 0) lastTLHeightPx = maxTlH;
 
                             // 依 bbox 高度由大到小排序（大的通常比較近、比較清楚）
@@ -587,14 +572,45 @@ public class MainActivity extends AppCompatActivity {
                             // 只挑最大的 1～2 個做判色（避免每幀大量 OpenCV 計算）
                             int maxColorCheck = Math.min(2, tls.size());
 
+                            // === 4) 每 15 幀，把 AE/AF/測光點對準「畫面上最大」那盞燈 ===
+                            if ((frameIndex % 15) == 0 && !tls.isEmpty() && camera != null) {
+                                // 先把這顆燈從「影像座標」轉成 Overlay(View) 座標，取中點
+                                RectF imgBox = tls.get(0).getLocation();  // 目前是影像座標
+                                RectF vbox   = mapRectToOverlay(imgBox, bitmap.getWidth(), bitmap.getHeight()); // 你的現成函式
+
+                                float cx = (vbox.left + vbox.right) * 0.5f;
+                                float cy = (vbox.top  + vbox.bottom)* 0.5f;
+
+                                MeteringPointFactory mpf = previewView.getMeteringPointFactory();
+                                MeteringPoint pt = mpf.createPoint(cx, cy); // 以 View 像素建立 metering point
+
+                                FocusMeteringAction act = new FocusMeteringAction.Builder(
+                                        pt, FocusMeteringAction.FLAG_AF | FocusMeteringAction.FLAG_AE
+                                ).setAutoCancelDuration(2, java.util.concurrent.TimeUnit.SECONDS).build();
+
+                                camera.getCameraControl().startFocusAndMetering(act);
+                            }
+
+
                             // 每 3 幀才做一次判色（降頻，降低延遲）
                             boolean doColorThisFrame = (frameIndex % 3 == 0);
 
                             if (doColorThisFrame) {
                                 for (int i = 0; i < maxColorCheck; i++) {
                                     DetectorMain.Recognition r = tls.get(i);
-                                    String c = detectTrafficLightColor(bitmap, r.getLocation());
-                                    r.setColor(c);
+                                    TLColor tc = detectTrafficLightColor(bitmap, r.getLocation());
+                                    r.setColor(tc.color);
+                                    r.setColorStrength((float) tc.strength);
+
+                                    // ✅ 保留小框弱化的效果：兩者取 min
+                                    float base = r.getColorStrength() > 0 ? r.getColorStrength() : 1f; // 若之前沒設就當 1
+                                    float s = Math.min(base, (float) tc.strength);
+                                    r.setColorStrength(s);
+
+                                    // 再餵進「跨幀投票」(你已把 voteColorOverFrames 改成吃 strength)
+                                    String voted = voteColorOverFrames(r.getLocation(), r.getColor(), r.getColorStrength());
+                                    r.setColor(voted);
+
                                     // 可選：Log 診斷
                                     // Log.d("DEBUG_TL", "TrafficLight color = " + c + " bbox=" + r.getLocation());
                                 }
@@ -788,7 +804,6 @@ public class MainActivity extends AppCompatActivity {
         return out;
     }
 
-
     private void startLocationUpdates() {
         locationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
         try {
@@ -814,22 +829,19 @@ public class MainActivity extends AppCompatActivity {
         @Override
         public void onLocationChanged(@NonNull Location location) {
             Log.e("SpeedLimit", "LOC tick");
-
             lastLocation = location;
             float speedKmh = location.getSpeed() * 3.6f;
 
-            updateSpeedUi(speedKmh, currentSpeedLimitKmh);
+            updateSpeedUi(speedKmh);
 
             maybeAlertOverspeed(speedKmh, currentSpeedLimitKmh);
             Log.e("OSMSpeed", "call maybeFetch from onLocationChanged");
             maybeFetchAndApplySpeedLimit(location);
-
-
             Log.d("SpeedLimit", String.format(java.util.Locale.US,
                     "onLoc: v=%.1f km/h lat=%.6f lon=%.6f",
                     speedKmh, location.getLatitude(), location.getLongitude()));
-
         }
+
         public void onProviderEnabled(@NonNull String provider) {
         }
 
@@ -840,8 +852,6 @@ public class MainActivity extends AppCompatActivity {
         @Override
         public void onStatusChanged(String provider, int status, Bundle extras) {
         }
-
-
     };
 
     private void loadSettingsFromPreferences() {
@@ -867,7 +877,6 @@ public class MainActivity extends AppCompatActivity {
         Button btnSave = view.findViewById(R.id.btnSave);
         Button btnLogout = view.findViewById(R.id.btnLogout);
         ImageButton btnClose = view.findViewById(R.id.btnCloseDialog);
-
         AtomicInteger tempSensitivity = new AtomicInteger(sensitivityLevel);
         AtomicBoolean tempVoiceEnabled = new AtomicBoolean(isVoiceEnabled);
         AtomicBoolean tempVibrationEnabled = new AtomicBoolean(isVibrationEnabled);
@@ -993,7 +1002,6 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-
     private boolean isLocationEnabled() {
         LocationManager lm = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
         try { return lm.isProviderEnabled(LocationManager.GPS_PROVIDER) || lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER); }
@@ -1047,7 +1055,6 @@ public class MainActivity extends AppCompatActivity {
             Log.w("通知權限", "尚未取得通知權限，無法顯示通知");
         }
     }
-
 
     private void processPedestrianLogic(List<DetectorMain.Recognition> recognitions) {
         boolean hasPerson = false;
@@ -1136,15 +1143,14 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-
-
-    private String detectTrafficLightColor(Bitmap fullBmp, RectF rawBox) {
+    // 將原本的：private String detectTrafficLightColor(...) 改成回傳 TLColor
+    private TLColor detectTrafficLightColor(Bitmap fullBmp, RectF rawBox) {
         Mat mat = new Mat(), mask = new Mat(), maskLight = new Mat(), kernel = null;
         List<Mat> hsv = new ArrayList<>();
         Mat redMask = new Mat(), tmpRed = new Mat(), yellowMask = new Mat(), greenMask = new Mat();
 
         try {
-            // 1) ROI 稍微內縮，避免邊緣
+            // 1) ROI 內縮，避開邊框/反光
             RectF box = new RectF(rawBox);
             float insetX = box.width()  * TL_ROI_INSET;
             float insetY = box.height() * TL_ROI_INSET;
@@ -1154,29 +1160,35 @@ public class MainActivity extends AppCompatActivity {
             int y = Math.max(0, (int) box.top);
             int w = Math.min(fullBmp.getWidth()  - x, (int) box.width());
             int h = Math.min(fullBmp.getHeight() - y, (int) box.height());
-            if (w < 15 || h < 15) return "unknown";
+            if (w < 15 || h < 15) return new TLColor("unknown", 0.0);
 
             Bitmap crop = Bitmap.createBitmap(fullBmp, x, y, w, h);
-            Bitmap cropSmall = Bitmap.createScaledBitmap(crop, 96, 96, true);
+
+            // 2) 目標邊長自適應放大（小 ROI 先放大），再做 Unsharp Mask 銳化
+            int targetSide = (Math.max(w, h) < 18) ? 160 : (Math.max(w, h) < 28 ? 128 : 96);
+            Bitmap cropSmall = Bitmap.createScaledBitmap(crop, targetSide, targetSide, true);
             crop.recycle();
 
-            // 2) 轉 HSV
             Utils.bitmapToMat(cropSmall, mat);
             cropSmall.recycle();
             Imgproc.cvtColor(mat, mat, Imgproc.COLOR_RGBA2BGR);
+
+            Mat blurred = new Mat();
+            Imgproc.GaussianBlur(mat, blurred, new Size(0, 0), 1.0);         // 模糊版
+            Core.addWeighted(mat, 1.5, blurred, -0.5, 0, mat);               // 1.5*原圖 - 0.5*模糊
+            blurred.release();
+
+            // 3) 轉 HSV
             Imgproc.cvtColor(mat, mat, Imgproc.COLOR_BGR2HSV);
-
-
-            // 3) 拆 H/S/V
             Core.split(mat, hsv);
-            Mat hueChan   = hsv.get(0);
-            Mat satChan   = hsv.get(1);
+            Mat hueChan = hsv.get(0);
+            Mat satChan = hsv.get(1);
             Mat valueChan = hsv.get(2);
 
-            // 4) 用 Otsu 找亮區 + 降低飽和度門檻
+            // 4) 以亮度+飽和度取「亮區」
             Imgproc.threshold(valueChan, mask, 0, 255, Imgproc.THRESH_BINARY + Imgproc.THRESH_OTSU);
             Mat satMask = new Mat();
-            Imgproc.threshold(satChan, satMask, 60, 255, Imgproc.THRESH_BINARY); // 60 比 100 寬鬆
+            Imgproc.threshold(satChan, satMask, 60, 255, Imgproc.THRESH_BINARY);
             Core.bitwise_and(mask, satMask, mask);
             satMask.release();
 
@@ -1185,7 +1197,7 @@ public class MainActivity extends AppCompatActivity {
             Imgproc.morphologyEx(mask, mask, Imgproc.MORPH_OPEN,  kernel);
             Imgproc.morphologyEx(mask, mask, Imgproc.MORPH_CLOSE, kernel);
 
-            // 6) 取最大亮區
+            // 6) 取最大亮區（避免雜光）
             List<MatOfPoint> contours = new ArrayList<>();
             Imgproc.findContours(mask.clone(), contours, new Mat(), Imgproc.RETR_EXTERNAL, Imgproc.CHAIN_APPROX_SIMPLE);
             maskLight = Mat.zeros(mask.size(), mask.type());
@@ -1200,14 +1212,13 @@ public class MainActivity extends AppCompatActivity {
                 maskLight = mask.clone();
             }
 
-            // 7) 三色掩膜（在 HSV 空間）
+            // 7) 三色掩膜（嚴格範圍）
             Core.inRange(mat, LOWER_RED1, UPPER_RED1, redMask);
             Core.inRange(mat, LOWER_RED2, UPPER_RED2, tmpRed);
             Core.add(redMask, tmpRed, redMask);
             Core.inRange(mat, LOWER_YELLOW, UPPER_YELLOW, yellowMask);
-            Core.inRange(mat, LOWER_GREEN, UPPER_GREEN,   greenMask);
+            Core.inRange(mat, LOWER_GREEN,  UPPER_GREEN,  greenMask);
 
-            // 與最亮區相交
             Core.bitwise_and(redMask,    maskLight, redMask);
             Core.bitwise_and(yellowMask, maskLight, yellowMask);
             Core.bitwise_and(greenMask,  maskLight, greenMask);
@@ -1236,16 +1247,15 @@ public class MainActivity extends AppCompatActivity {
             }
 
             if (total >= TL_MIN_TOTALPX && max >= TL_MIN_RATIO && (max - second) >= TL_MIN_GAP) {
-                if (max == ratioR) return "red";
-                if (max == ratioY) return "yellow";
-                return "green";
+                String c = (max == ratioR) ? "red" : (max == ratioY ? "yellow" : "green");
+                return new TLColor(c, max); // ← strength 就是比例最大值
             }
 
-            // 9) 鬆綁 fallback（亮區太少或比例不明顯時）
+            // 9) 鬆綁 fallback（門檻更寬）
             Mat looseMask = new Mat();
             Mat valMask2 = new Mat(), satMask2 = new Mat();
-            Imgproc.threshold(valueChan, valMask2, 60, 255, Imgproc.THRESH_BINARY); // V>=60
-            Imgproc.threshold(satChan,   satMask2, 40, 255, Imgproc.THRESH_BINARY); // S>=40
+            Imgproc.threshold(valueChan, valMask2, 60, 255, Imgproc.THRESH_BINARY);
+            Imgproc.threshold(satChan,   satMask2, 40, 255, Imgproc.THRESH_BINARY);
             Core.bitwise_and(valMask2, satMask2, looseMask);
             valMask2.release(); satMask2.release();
 
@@ -1265,10 +1275,6 @@ public class MainActivity extends AppCompatActivity {
             int g2c = Core.countNonZero(g2);
             int tot2 = Core.countNonZero(looseMask);
 
-            if (TL_DEBUG_LOG) {
-                Log.d("TLDBG", String.format("fallback tot=%d r2=%d y2=%d g2=%d", tot2, r2, y2c, g2c));
-            }
-
             red2.release(); tmp2.release(); y2.release(); g2.release();
             looseMask.release();
 
@@ -1278,22 +1284,22 @@ public class MainActivity extends AppCompatActivity {
                 double rG2 = g2c / (double) tot2;
                 double m2  = Math.max(rR2, Math.max(rY2, rG2));
                 if (m2 >= 0.02) {
-                    if (m2 == rR2) return "red";
-                    if (m2 == rY2) return "yellow";
-                    return "green";
+                    if (m2 == rR2) return new TLColor("red",    m2);
+                    if (m2 == rY2) return new TLColor("yellow", m2);
+                    return new TLColor("green",  m2);
                 }
             }
 
-            // 10) 最終兜底：Hue 平均（避免全是 unknown）
+            // 10) 最終兜底：用 Hue 平均估（給一個固定較低的 strength）
             Scalar mHue = Core.mean(hueChan, maskLight);
             Scalar mSat = Core.mean(satChan, maskLight);
             double hue = mHue.val[0], sat = mSat.val[0];
             if (sat >= 40) {
-                if (hue <= 10 || hue >= 160) return "red";
-                if (hue <= 45) return "yellow";
-                if (hue <= 100) return "green";
+                if (hue <= 10 || hue >= 160) return new TLColor("red",    0.15);
+                if (hue <= 45)               return new TLColor("yellow", 0.15);
+                if (hue <= 100)              return new TLColor("green",  0.15);
             }
-            return "unknown";
+            return new TLColor("unknown", 0.0);
 
         } finally {
             mat.release(); mask.release(); maskLight.release();
@@ -1302,8 +1308,6 @@ public class MainActivity extends AppCompatActivity {
             redMask.release(); tmpRed.release(); yellowMask.release(); greenMask.release();
         }
     }
-
-
 
     private int getMaxVerticalProjection(Mat binaryMask) {
         int rows = binaryMask.rows();
@@ -1467,7 +1471,6 @@ public class MainActivity extends AppCompatActivity {
         return out;
     }
 
-
     private List<DetectorMain.Recognition> mapToViewCoordinates(
             List<DetectorMain.Recognition> imageResults,
             float viewW, float viewH, float imgW, float imgH) {
@@ -1516,17 +1519,21 @@ public class MainActivity extends AppCompatActivity {
         return denom > 0 ? inter / denom : 0f;
     }
 
-    private String voteColorOverFrames(RectF box, String current) {
-        // 清除過期
+    private String voteColorOverFrames(RectF box, String current, float strength) {
+        // 1) 清除過期的追蹤
         for (int i = tlTracks.size() - 1; i >= 0; i--) {
             if (frameIndex - tlTracks.get(i).seenFrame > TRACK_TTL) tlTracks.remove(i);
         }
 
-        // 尋找最像的 track（IoU 放寬到 0.30）
-        TLTrack best = null; float bestIou = 0f;
+        // 2) 用 IoU 找最像的 track，找不到就新建
+        TLTrack best = null;
+        float bestIou = 0f;
         for (TLTrack t : tlTracks) {
             float iouVal = iou(t.box, box);
-            if (iouVal > bestIou && iouVal >= TRACK_IOU_MATCH) { best = t; bestIou = iouVal; }
+            if (iouVal > bestIou && iouVal >= TRACK_IOU_MATCH) {
+                best = t;
+                bestIou = iouVal;
+            }
         }
         if (best == null) {
             best = new TLTrack();
@@ -1535,31 +1542,46 @@ public class MainActivity extends AppCompatActivity {
             best.votes = new int[4];
             tlTracks.add(best);
         }
-
         best.seenFrame = frameIndex;
         best.box = new RectF(box);
 
+        // 3) 目前顏色索引
         int idx = colorIdx(current);
 
-        // 若這幀不確定（unknown），維持穩定色並延長 hold 一點
+        // 4) unknown：維持穩定色並逐步遞減 hold
         if (idx == 0) {
             if (best.stable != 0 && best.hold > 0) best.hold--;
             return colorStr(best.stable != 0 ? best.stable : 0);
         }
 
-        // 候選色連續統計
+        // 5) 候選色連續統計
         if (idx == best.cand) best.streak++;
-        else { best.cand = idx; best.streak = 1; }
+        else {
+            best.cand = idx;
+            best.streak = 1;
+        }
 
-        // 若已確認且還在保留期，除非連續很久才允許切換
+        // 6) 強度（0~1）→ 所需連續幀數 need（強度高 → need 低）
+        if (Float.isNaN(strength) || strength < 0f) strength = 0f;
+        if (strength > 1f) strength = 1f;
+
+        int need = Math.max(1, Math.round(
+                COLOR_CONFIRM_FRAMES * (0.4f / Math.max(0.2f, strength))
+        ));
+        // 範例：strength=0.4 → need≈COLOR_CONFIRM_FRAMES
+        //      strength=0.8 → need≈COLOR_CONFIRM_FRAMES*0.5
+        //      strength=0.2 → need≈COLOR_CONFIRM_FRAMES*2
+
+        // 7) 轉換或確認穩定色（帶保留期）
         if (best.stable != 0 && best.cand != best.stable) {
-            if (best.streak >= COLOR_CONFIRM_FRAMES && best.hold <= 0) {
+            // 已有穩定色，只有在連續達標且過了 hold 才換色
+            if (best.streak >= need && best.hold <= 0) {
                 best.stable = best.cand;
                 best.hold   = COLOR_HOLD_FRAMES;
             }
         } else {
-            // 初次確認，或候選==穩定：重設保留
-            if (best.streak >= COLOR_CONFIRM_FRAMES) {
+            // 初次或同色續強：連續達標就確認並刷新 hold
+            if (best.streak >= need) {
                 best.stable = best.cand;
                 best.hold   = COLOR_HOLD_FRAMES;
             }
@@ -1567,8 +1589,6 @@ public class MainActivity extends AppCompatActivity {
 
         return colorStr(best.stable);
     }
-
-
 
     private float estimateDistanceByHeightPx(float boxHeightPx, float realHeightM) {
         if (fPxY <= 0 || boxHeightPx <= 0) return -1f;
@@ -1615,54 +1635,60 @@ public class MainActivity extends AppCompatActivity {
         lastQueryLat = lat;
         lastQueryLng = lng;
 
-        // 以 70m 半徑找有 maxspeed 的道路
+        // ✅ 重點：同時抓 highway 與 maxspeed（最近的前幾筆）
         String q = "[out:json][timeout:8];"
-                + "way(around:70," + lat + "," + lng + ")[\"highway\"][\"maxspeed\"];"
-                + "out tags 20;";
+                + "way(around:70," + lat + "," + lng + ")[\"highway\"];"
+                + "out tags center 10;"; // out center 會帶回中心點，通常依距離排序
+
         Log.e("OSMSpeed", "QUERY=" + q);
 
-        if (overpassApi == null) {
-            Log.e("OSMSpeed", "overpassApi is null → init");
-            initOverpassApi();
-        }
+        if (overpassApi == null) initOverpassApi();
 
         overpassApi.query(q).enqueue(new retrofit2.Callback<OverpassResp>() {
             @Override public void onResponse(Call<OverpassResp> call, Response<OverpassResp> resp) {
                 OverpassResp body = resp.body();
                 if (!resp.isSuccessful() || body == null) {
                     Log.e("OSMSpeed", "HTTP=" + resp.code() + " body=" + body);
-                    // 只在「查不到資料」要用 50 的話，這裡不要動 currentSpeedLimitKmh。
                     return;
                 }
 
-                Integer best = null;
+                Integer decided = null;
+
                 if (body.elements != null) {
+                    // 依回傳順序（通常最近）挑第一個能決定速限的
                     for (OverpassResp.Element el : body.elements) {
                         if (el == null || el.tags == null) continue;
-                        Integer v = pickMaxspeedFromTags(el.tags); // 你原本的解析函式
-                        if (v != null) { best = v; break; }
+
+                        // 1) 有 maxspeed → 直接用
+                        Integer v = pickMaxspeedFromTags(el.tags);
+                        if (v != null) { decided = v; break; }
+
+                        // 2) 沒有 maxspeed → 用 highway 類型推估
+                        String hw = el.tags.get("highway");
+                        Integer guess = HighwaySpeedTable.fromHighway(hw);
+                        if (guess != null) { decided = guess; break; }
                     }
                 }
 
-                if (best == null) {
-                    // ← OSM 沒有速限資料，改用 50
-                    best = DEFAULT_OSM_SPEED_KMH;
-                    Log.e("OSMSpeed", "no OSM maxspeed → fallback " + best);
-                }
-                best = Math.min(best, MAX_LIMIT_CAP_KMH);
-                currentSpeedLimitKmh = best;
+                // 最後兜底
+                if (decided == null) decided = DEFAULT_OSM_SPEED_KMH; // 仍給保守 50
+
+                // ⚠️ 不再硬性 cap 在 50；若你想保險，可 cap 在 90
+                // decided = Math.min(decided, 90);
+
+                currentSpeedLimitKmh = decided;
                 Log.e("OSMSpeed", "SET limit=" + currentSpeedLimitKmh);
 
                 if (lastLocation != null) {
                     float sp = lastLocation.getSpeed() * 3.6f;
-                    updateSpeedUi(sp, currentSpeedLimitKmh);
+                    updateSpeedUi(sp);
                     maybeAlertOverspeed(sp, currentSpeedLimitKmh);
                 }
             }
 
-
-            @Override public void onFailure(retrofit2.Call<OverpassResp> call, Throwable t) {
+            @Override public void onFailure(Call<OverpassResp> call, Throwable t) {
                 Log.e("OSMSpeed", "FAIL", t);
+                // 保留原速限；或你也可設定成 DEFAULT_OSM_SPEED_KMH
             }
         });
     }
@@ -1700,7 +1726,7 @@ public class MainActivity extends AppCompatActivity {
 
                 if (lastLocation != null) {
                     float sp = lastLocation.getSpeed() * 3.6f;
-                    updateSpeedUi(sp, currentSpeedLimitKmh);
+                    updateSpeedUi(sp);
                     maybeAlertOverspeed(sp, currentSpeedLimitKmh);
                 }
             }
@@ -1751,7 +1777,6 @@ public class MainActivity extends AppCompatActivity {
             this.notifier = n;
         }
 
-
         void onLocation(android.location.Location loc) {
             if (loc == null) return;
             if (loc.getAccuracy() > 25f) return; // 精度太差先跳過
@@ -1798,13 +1823,6 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    /** 先回固定 50 km/h 讓流程跑起來；之後把這裡換成：呼叫你們後端 / 商用 API + 本地快取 */
-    private static class DummySpeedLimitProvider implements SpeedAlertManager.SpeedLimitProvider {
-        @Override
-        public void getSpeedLimitAsync(double lat, double lon, float heading, Callback cb) {
-            cb.onResult(50);
-        }
-    }
     interface OverpassApi {
         @retrofit2.http.GET("api/interpreter")
         retrofit2.Call<OverpassResp> query(@retrofit2.http.Query("data") String q);
@@ -1816,11 +1834,36 @@ public class MainActivity extends AppCompatActivity {
         java.util.List<Element> elements;
     }
 
-    // === UI 顯示「時速 + 限速」 ===限速：%d km/h, limitKmh
-    private void updateSpeedUi(float speedKmh, Integer limitKmh) {
+    // === UI 顯示「時速」 ===
+    private void updateSpeedUi(float speedKmh) {
         tvSpeed.setText(String.format(java.util.Locale.TAIWAN, "時速：%.1f km/h ", speedKmh));
     }
 
+    public static final class HighwaySpeedTable {
+        private HighwaySpeedTable() {}
+        public static Integer fromHighway(String highway) {
+
+            if (highway == null) return 50; // 最後兜底
+            switch (highway) {
+                case "motorway":
+                    return null;
+                case "trunk":
+                case "primary":
+                case "secondary":
+                case "tertiary":
+                    return 50;
+                case "residential":
+                case "unclassified":
+                    return 40;
+                case "service":
+                case "track":
+                case "living_street":
+                    return 30;
+                default:
+                    return 50;
+            }
+        }
+    }
     // === 超速提醒（沿用你原本的語音/通知） ===
     private void maybeAlertOverspeed(float speedKmh, Integer limitKmh) {
         if (limitKmh == null || limitKmh <= 0) return;
@@ -1838,13 +1881,12 @@ public class MainActivity extends AppCompatActivity {
                         "超速提醒，目前 %.0f，限速 %d，請減速", speedKmh, limitKmh));
                 if (isVibrationEnabled) triggerMiBandVibration();
                 sendAlertNotification("超速提醒",
-                        String.format(java.util.Locale.TAIWAN, "目前 %.0f km/h，限速 %d", speedKmh, limitKmh));
+                        String.format(java.util.Locale.TAIWAN, "目前 %.0f km/h，限速 %d km/h，請減速", speedKmh, limitKmh));
             }
         } else {
             overspeedSinceMs = 0L; // 一降速就重算
         }
     }
-
 
     // === Haversine：兩點距離（公尺） ===
     private static float distanceMeters(float lat1, float lon1, float lat2, float lon2) {
@@ -1929,5 +1971,9 @@ public class MainActivity extends AppCompatActivity {
         signalPM.start();
     }
 
+    private static class TLColor {
+        String color;
+        double strength; // 0~1，採用 max(ratioR, ratioY, ratioG)
+        TLColor(String c, double s) { color=c; strength=s; }
+    }
 }
-

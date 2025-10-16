@@ -26,11 +26,9 @@ import java.util.List;
 public class DetectorMain {
     private static final String TAG = "DetectorMain";
     private static final int INPUT_SIZE = 640;
-    private static final float CONFIDENCE_THRESHOLD = 0.4f;
-
+    private static final float CONFIDENCE_THRESHOLD = 0.28f;
     private final Interpreter interpreter;
     private final List<String> labels;
-
     private final String modelType;
 
     //三次除法改用查表
@@ -47,7 +45,6 @@ public class DetectorMain {
     private final Bitmap resizedBitmap;             // 640x640，避免每幀新建
     private final Rect srcRect = new Rect();        // 畫布縮放時重用
     private final Rect dstRect = new Rect(0, 0, INPUT_SIZE, INPUT_SIZE);
-
     private Delegate delegate = null;
     private int outBatch, outBoxes, outElems;
     private float[][][] out3d;   // 扁平化輸出緩衝
@@ -228,6 +225,9 @@ public class DetectorMain {
         private final float confidence;
         private RectF location;
         private String color = "unknown";  // 燈號顏色
+        private float colorStrength = 0f;
+        public float getColorStrength() { return colorStrength; }
+        public void setColorStrength(float s) { this.colorStrength = s; }
 
         public Recognition(String id, String title, float confidence, RectF location) {
             this.id = id;
