@@ -93,9 +93,6 @@ import androidx.camera.camera2.interop.ExperimentalCamera2Interop;
 import android.media.AudioAttributes;
 import android.net.Uri;
 import android.provider.Settings;
-import com.example.detect.geo.SignalPoint;
-import com.example.detect.geo.SignalRepository;
-import com.example.detect.geo.SignalProximityManager;
 import retrofit2.Retrofit;
 import retrofit2.converter.gson.GsonConverterFactory;
 import androidx.camera.core.MeteringPoint;
@@ -104,8 +101,6 @@ import androidx.camera.core.FocusMeteringAction;
 
 @OptIn(markerClass = ExperimentalCamera2Interop.class)
 public class MainActivity extends AppCompatActivity {
-    private SignalRepository signalRepo;
-    private SignalProximityManager signalPM;
     private PreviewView previewView;
     private OverlayView overlayView;
     private TextView tvSpeed;
@@ -271,8 +266,6 @@ public class MainActivity extends AppCompatActivity {
         setContentView(R.layout.activity_main);
         Log.e("SpeedLimit", "BOOT onCreate()");
         initOverpassApi();
-        signalRepo = new SignalRepository(this);
-        signalRepo.loadFromAssets("export.geojson");
         createNotificationChannel();
         requestBtPermsIfNeeded();
         ensureMiBandConnected();
@@ -290,7 +283,6 @@ public class MainActivity extends AppCompatActivity {
                         == PackageManager.PERMISSION_GRANTED) {
             startCamera();
             startLocationUpdates();
-            startSignalProximity();
         } else {
             ActivityCompat.requestPermissions(this,
                     new String[]{ Manifest.permission.CAMERA,
@@ -865,7 +857,6 @@ public class MainActivity extends AppCompatActivity {
             if (camOk) startCamera();
             if (locOk) {
                 startLocationUpdates();
-                startSignalProximity();   // 權限通過後啟動前方路口提醒
             }
             return;
         }
@@ -1214,7 +1205,6 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
-        if (signalPM != null) signalPM.stop();
 
         if (textToSpeech != null) {
             textToSpeech.stop();
@@ -1835,27 +1825,7 @@ public class MainActivity extends AppCompatActivity {
         return null;
     }
 
-    private void startSignalProximity() {
-        if (signalRepo == null) return;
 
-        signalPM = new SignalProximityManager(
-                this,
-                signalRepo,
-                (SignalPoint p, float dMeters) -> runOnUiThread(() -> {
-                    String msg = String.format(java.util.Locale.getDefault(),
-                            "前方 %.0f 公尺有路口", dMeters);
-                    Toast.makeText(MainActivity.this, msg, Toast.LENGTH_SHORT).show();
-                    if (isVoiceEnabled) {
-                        speakOnce("前方五十公尺有路口，請減速注意");
-                    }
-                    sendAlertNotification("前方路口", "距離約 " + (int)dMeters + " 公尺");
-                    if (isVibrationEnabled) {
-                        triggerMiBandVibration(); //呼叫手環
-                    }
-                })
-        );
-        signalPM.start();
-    }
 
     private static class TLColor {
         String color;
