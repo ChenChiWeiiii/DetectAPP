@@ -14,13 +14,14 @@ import java.util.List;
 
 public class OverlayView extends View {
     private List<DetectorMain.Recognition> results = new ArrayList<>();
+    private List<DetectorMain.Recognition> lastResults = new ArrayList<>();
     private Paint boxPaint;
     private Paint textPaint;
     private final int defaultTextColor = Color.YELLOW;
 
-    // === 新增：記錄上次更新時間 ===
+    // 時間控制
     private long lastUpdateTime = 0;
-    private static final long MAX_HOLD_MS = 500; // 若 0.5 秒沒新結果就清除（可自行調整）
+    private static final long MAX_HOLD_MS = 500; // 紅框保留時間 0.5 秒
 
     public OverlayView(Context context, AttributeSet attrs) {
         super(context, attrs);
@@ -37,39 +38,42 @@ public class OverlayView extends View {
         textPaint.setTextSize(50f);
     }
 
-    public void setResults(List<DetectorMain.Recognition> results) {
-        // 若 YOLO 暫時沒有結果，不更新畫面（避免閃爍）
-        if (results == null || results.isEmpty()) {
+    // ✅ 用於接收 YOLO 結果
+    public void setResults(List<DetectorMain.Recognition> newResults) {
+        long now = System.currentTimeMillis();
+
+        if (newResults == null || newResults.isEmpty()) {
+            // 沒有新結果：只重畫上一幀，不清空
             postInvalidateDelayed(16);
             return;
         }
 
-        this.results = new ArrayList<>(results);
-        lastUpdateTime = System.currentTimeMillis(); // 更新時間戳
+        // 更新時間與緩衝
+        this.results = new ArrayList<>(newResults);
+        this.lastResults = this.results;
+        lastUpdateTime = now;
         invalidate();
-        Log.d("OverlayView", "Result：" + this.results.size());
     }
 
     @Override
     protected void onDraw(Canvas canvas) {
         long now = System.currentTimeMillis();
 
-        // 若超過 0.5 秒沒更新 → 清空畫面
+        // ✅ 若超過 0.5 秒沒新結果，就清空畫面
         if (now - lastUpdateTime > MAX_HOLD_MS) {
             results.clear();
+            lastResults.clear();
             canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR);
-            super.onDraw(canvas);
             postInvalidateDelayed(33);
             return;
         }
 
-        // 若暫時沒有新結果 → 保留上一幀紅框，避免閃爍
+        // ✅ 若暫時沒有新結果，用上一幀的結果
         if (results == null || results.isEmpty()) {
-            postInvalidateDelayed(16);
-            return;
+            results = new ArrayList<>(lastResults);
         }
 
-        // 有結果才清畫布重新繪製
+        // ✅ 清畫布再畫
         canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR);
         super.onDraw(canvas);
 
@@ -86,6 +90,7 @@ public class OverlayView extends View {
         for (DetectorMain.Recognition result : results) {
             RectF box = result.getLocation();
             canvas.drawRect(box, boxPaint);
+
             textPaint.setColor(defaultTextColor);
             canvas.drawText(
                     result.getTitle() + " (" + String.format("%.2f", result.getConfidence()) + ")",
@@ -95,55 +100,31 @@ public class OverlayView extends View {
             if ("traffic_light".equals(result.getTitle())) {
                 if (fPxY > 0f) {
                     float hView = box.height();
-                    float hImg  = hView / scale;
+                    float hImg = hView / scale;
                     float d = MainActivity.estimateDistanceForHeightPx(
                             fPxY, calib, hImg, MainActivity.H_TL_LAMP
                     );
                     String color = result.getColor();
-                    int textColor = Color.WHITE;
-                    if ("red".equals(color)) textColor = Color.RED;
-                    else if ("yellow".equals(color)) textColor = Color.YELLOW;
-                    else if ("green".equals(color)) textColor = Color.GREEN;
+                    int textColor;
+                    if ("red".equals(color)) {
+                        textColor = Color.RED;
+                    } else if ("yellow".equals(color)) {
+                        textColor = Color.YELLOW;
+                    } else if ("green".equals(color)) {
+                        textColor = Color.GREEN;
+                    } else {
+                        textColor = Color.WHITE;
+                    }
                     textPaint.setColor(textColor);
                     canvas.drawText(
                             String.format("%s 距離： %.1f m", color, d > 0 ? d : 0f),
                             box.left, box.bottom + 40, textPaint
                     );
-                    textPaint.setColor(defaultTextColor);
-                }
-            }
-
-            if (result.getTitle() != null && result.getTitle().toLowerCase().contains("person")) {
-                if (fPxY > 0f) {
-                    float hView = box.height();
-                    float hImg  = hView / scale;
-                    float d = MainActivity.estimateDistanceForHeightPx(
-                            fPxY, calib, hImg, MainActivity.H_PERSON
-                    );
-                    textPaint.setColor(Color.CYAN);
-                    canvas.drawText(
-                            String.format("距離：  %.1f m", d > 0 ? d : 0f),
-                            box.left, box.bottom + 40, textPaint
-                    );
-                    textPaint.setColor(defaultTextColor);
-                }
-            }
-
-            if (result.getTitle() != null && result.getTitle().toLowerCase().contains("crosswalk")) {
-                if (fPxY > 0f) {
-                    float yBottomView = box.bottom;
-                    float yBottomImg  = (yBottomView - dy) / scale;
-                    float denom = (yBottomImg - cy);
-                    float d = (denom > 1f) ? (MainActivity.H_CAMERA * fPxY / denom) : -1f;
-                    if (d > 0) d *= calib;
-                    textPaint.setColor(Color.WHITE);
-                    canvas.drawText(
-                            String.format("距離：  %.1f m", d > 0 ? d : 0f),
-                            box.left, box.bottom + 40, textPaint
-                    );
-                    textPaint.setColor(defaultTextColor);
                 }
             }
         }
+
+        // ✅ 持續重繪畫面
+        postInvalidateDelayed(16);
     }
 }
