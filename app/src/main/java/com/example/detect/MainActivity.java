@@ -242,7 +242,6 @@ public class MainActivity extends AppCompatActivity {
     private float currentLinearZoom = 0.35f; // 依機型微調，約 1.7~2.0x
     private final java.util.concurrent.atomic.AtomicReference<List<DetectorMain.Recognition>> lastStableResults =
             new java.util.concurrent.atomic.AtomicReference<>();
-    private final List<DetectorMain.Recognition> activeBoxes = new ArrayList<>();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -479,10 +478,16 @@ public class MainActivity extends AppCompatActivity {
 
                                     // ✅ 每 3 幀跑一次 YOLO
                                     if (frameIndex % 3 == 0) {
-                                        dets = detector.detect(bitmap, bitmap.getWidth(), bitmap.getHeight());
-                                        lastDetections.set(dets); // 暫存給追蹤
+                                        List<DetectorMain.Recognition> newDets = detector.detect(bitmap, bitmap.getWidth(), bitmap.getHeight());
+
+                                        // 用 IoU 跟前一幀比對，保持追蹤穩定
+                                        List<DetectorMain.Recognition> prev = lastDetections.get();
+                                        if (prev != null && !prev.isEmpty()) {
+                                            newDets = smoothMatchWithPrev(prev, newDets);
+                                        }
+                                        lastDetections.set(newDets);
+                                        dets = newDets;
                                     } else {
-                                        // ✅ 其餘幀用前一幀框做簡單追蹤
                                         List<DetectorMain.Recognition> prev = lastDetections.get();
                                         dets = (prev != null) ? updateTrackPositionsUsingIoU(prev) : new ArrayList<>();
                                     }
@@ -498,38 +503,46 @@ public class MainActivity extends AppCompatActivity {
                             cvExecutor.execute(() -> {
                                 List<DetectorMain.Recognition> dets = lastDetections.get();
 
-                                // --- 如果 YOLO 有新結果 ---
-                                if (dets != null && !dets.isEmpty()) {
-                                    activeBoxes.clear();
-                                    for (DetectorMain.Recognition r : dets) {
-                                        if ("traffic_light".equals(r.getTitle())) {
-                                            // 顏色分析
-                                            TLColor tc = detectTrafficLightColor(currentBitmap, r.getLocation());
-                                            r.setColor(tc.color);
-                                            r.setColorStrength((float) tc.strength);
-                                            activeBoxes.add(r);
-                                        }
-                                    }
+                                // ✅ 若 YOLO 暫時沒有結果，仍沿用上一幀（避免紅框閃爍）
+                                List<DetectorMain.Recognition> detCopy;
+                                if (dets == null || dets.isEmpty()) {
+                                    detCopy = lastStableResults.get();
+                                    if (detCopy == null) return; // 第一次還沒有任何結果
                                 } else {
-                                    // --- 沒有新 YOLO 結果：沿用舊框並讓它微移動（模擬追蹤） ---
-                                    for (DetectorMain.Recognition r : activeBoxes) {
-                                        RectF loc = r.getLocation();
-                                        float dx = (float)(Math.random() * 2 - 1);
-                                        float dy = (float)(Math.random() * 2 - 1);
-                                        loc.offset(dx, dy);
-                                        r.setLocation(loc);
+                                    // ✅ 複製 YOLO 結果（避免多執行緒修改同一物件）
+                                    detCopy = new ArrayList<>();
+                                    for (DetectorMain.Recognition r : dets) {
+                                        DetectorMain.Recognition c = new DetectorMain.Recognition(
+                                                r.getId(), r.getTitle(), r.getConfidence(), new RectF(r.getLocation()));
+                                        c.setColor(r.getColor());
+                                        c.setColorStrength(r.getColorStrength());
+                                        detCopy.add(c);
                                     }
+                                    lastStableResults.set(detCopy);
                                 }
 
-                                // --- 更新畫面（不清空框） ---
+                                // 取出交通號誌
+                                List<DetectorMain.Recognition> tls = new ArrayList<>();
+                                for (DetectorMain.Recognition r : dets) {
+                                    if ("traffic_light".equals(r.getTitle())) tls.add(r);
+                                }
+
+                                // 顏色分析
+                                for (DetectorMain.Recognition r : tls) {
+                                    TLColor tc = detectTrafficLightColor(currentBitmap, r.getLocation());
+                                    r.setColor(tc.color);
+                                    r.setColorStrength((float) tc.strength);
+                                }
+
+                                // ✅ 更新畫面（保持轉換）
                                 runOnUiThread(() -> {
                                     if (currentBitmap != null) {
                                         int imgW = currentBitmap.getWidth();
                                         int imgH = currentBitmap.getHeight();
-                                        List<DetectorMain.Recognition> viewResults = toOverlayResults(activeBoxes, imgW, imgH);
+                                        List<DetectorMain.Recognition> viewResults = toOverlayResults(dets, imgW, imgH);
                                         overlayView.setResults(viewResults);
                                     } else {
-                                        overlayView.setResults(activeBoxes);
+                                        overlayView.setResults(dets);
                                     }
                                 });
                             });
@@ -1852,25 +1865,84 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private List<DetectorMain.Recognition> updateTrackPositionsUsingIoU(List<DetectorMain.Recognition> prev) {
+        // 保留追蹤框的歷史
         List<DetectorMain.Recognition> tracked = new ArrayList<>();
 
+        if (currentBitmap == null) return prev; // 沒畫面時維持原狀
+
+        int imgW = currentBitmap.getWidth();
+        int imgH = currentBitmap.getHeight();
+
         for (DetectorMain.Recognition rPrev : prev) {
-            // 建立相同位置的新物件
+            // 取得上幀的框位置
+            RectF box = new RectF(rPrev.getLocation());
+
+            // === 模擬物件的位移補償 ===
+            // 因為騎車時物件會向後退（畫面中心往前）
+            // 讓框在垂直方向緩慢上移（模擬攝影機前進）
+            float moveY = imgH * 0.002f; // 可微調，越大越「貼近」實際移動
+            box.offset(0, -moveY);
+
+            // === 平滑補間 ===
+            // 若前一幀與本幀的 YOLO 框還能匹配，則做平滑插值
+            float alpha = 0.7f; // 越接近 1 越穩定
+            RectF smooth = new RectF(
+                    rPrev.getLocation().left * alpha + box.left * (1 - alpha),
+                    rPrev.getLocation().top * alpha + box.top * (1 - alpha),
+                    rPrev.getLocation().right * alpha + box.right * (1 - alpha),
+                    rPrev.getLocation().bottom * alpha + box.bottom * (1 - alpha)
+            );
+
+            // === 建立新的 Recognition ===
             DetectorMain.Recognition r = new DetectorMain.Recognition(
-                    rPrev.getId(), rPrev.getTitle(), rPrev.getConfidence(), new RectF(rPrev.getLocation())
+                    rPrev.getId(),
+                    rPrev.getTitle(),
+                    rPrev.getConfidence(),
+                    smooth
             );
             r.setColor(rPrev.getColor());
             r.setColorStrength(rPrev.getColorStrength());
 
-            // 模擬微小漂移（讓畫面更自然）
-            RectF loc = r.getLocation();
-            float dx = (float) (Math.random() * 2 - 1); // ±1px 隨機偏移
-            float dy = (float) (Math.random() * 2 - 1);
-            loc.offset(dx, dy);
-            r.setLocation(loc);
-
             tracked.add(r);
         }
+
         return tracked;
+    }
+
+    private List<DetectorMain.Recognition> smoothMatchWithPrev(
+            List<DetectorMain.Recognition> prev, List<DetectorMain.Recognition> curr) {
+
+        List<DetectorMain.Recognition> result = new ArrayList<>();
+        float iouTh = 0.3f;
+
+        for (DetectorMain.Recognition c : curr) {
+            RectF boxC = c.getLocation();
+            float bestIou = 0f;
+            DetectorMain.Recognition bestPrev = null;
+
+            for (DetectorMain.Recognition p : prev) {
+                float iou = boxIoU(boxC, p.getLocation());
+                if (iou > bestIou) {
+                    bestIou = iou;
+                    bestPrev = p;
+                }
+            }
+
+            if (bestPrev != null && bestIou > iouTh) {
+                // 平滑位置過渡
+                RectF pBox = bestPrev.getLocation();
+                float alpha = 0.7f;
+                RectF smooth = new RectF(
+                        pBox.left * alpha + boxC.left * (1 - alpha),
+                        pBox.top * alpha + boxC.top * (1 - alpha),
+                        pBox.right * alpha + boxC.right * (1 - alpha),
+                        pBox.bottom * alpha + boxC.bottom * (1 - alpha)
+                );
+                c.setLocation(smooth);
+            }
+
+            result.add(c);
+        }
+        return result;
     }
 }
