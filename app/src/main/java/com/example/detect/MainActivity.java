@@ -240,6 +240,8 @@ public class MainActivity extends AppCompatActivity {
     private static final float ZOOM_MIN = 0.0f;           // linearZoom 範圍 0~1
     private static final float ZOOM_MAX = 1.0f;
     private float currentLinearZoom = 0.35f; // 依機型微調，約 1.7~2.0x
+    private final java.util.concurrent.atomic.AtomicReference<List<DetectorMain.Recognition>> lastStableResults =
+            new java.util.concurrent.atomic.AtomicReference<>();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -491,14 +493,29 @@ public class MainActivity extends AppCompatActivity {
                                     analyzing.set(false);
                                 }
                             });
-
-
                             // === 執行緒 B：OpenCV 顏色分析 ===
                             cvExecutor.execute(() -> {
                                 List<DetectorMain.Recognition> dets = lastDetections.get();
-                                if (dets == null) return;
 
-                                // 過濾出交通號誌
+                                // ✅ 若 YOLO 暫時沒有結果，仍沿用上一幀（避免紅框閃爍）
+                                List<DetectorMain.Recognition> detCopy;
+                                if (dets == null || dets.isEmpty()) {
+                                    detCopy = lastStableResults.get();
+                                    if (detCopy == null) return; // 第一次還沒有任何結果
+                                } else {
+                                    // ✅ 複製 YOLO 結果（避免多執行緒修改同一物件）
+                                    detCopy = new ArrayList<>();
+                                    for (DetectorMain.Recognition r : dets) {
+                                        DetectorMain.Recognition c = new DetectorMain.Recognition(
+                                                r.getId(), r.getTitle(), r.getConfidence(), new RectF(r.getLocation()));
+                                        c.setColor(r.getColor());
+                                        c.setColorStrength(r.getColorStrength());
+                                        detCopy.add(c);
+                                    }
+                                    lastStableResults.set(detCopy);
+                                }
+
+                                // 取出交通號誌
                                 List<DetectorMain.Recognition> tls = new ArrayList<>();
                                 for (DetectorMain.Recognition r : dets) {
                                     if ("traffic_light".equals(r.getTitle())) tls.add(r);
@@ -506,14 +523,13 @@ public class MainActivity extends AppCompatActivity {
 
                                 // 顏色分析
                                 for (DetectorMain.Recognition r : tls) {
-                                    TLColor tc = detectTrafficLightColor(bitmap, r.getLocation());
+                                    TLColor tc = detectTrafficLightColor(currentBitmap, r.getLocation());
                                     r.setColor(tc.color);
                                     r.setColorStrength((float) tc.strength);
                                 }
 
-                                // 回主執行緒更新畫面
+                                // ✅ 更新畫面（保持轉換）
                                 runOnUiThread(() -> {
-                                    // 把偵測結果從影像座標轉成 OverlayView 座標
                                     if (currentBitmap != null) {
                                         int imgW = currentBitmap.getWidth();
                                         int imgH = currentBitmap.getHeight();
@@ -524,7 +540,6 @@ public class MainActivity extends AppCompatActivity {
                                     }
                                 });
                             });
-
                         } catch (Throwable e) {
                             Log.e("Analyzer", "analyze error", e);
                             analyzing.set(false);
