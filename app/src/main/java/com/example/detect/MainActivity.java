@@ -512,7 +512,17 @@ public class MainActivity extends AppCompatActivity {
                                 }
 
                                 // 回主執行緒更新畫面
-                                runOnUiThread(() -> overlayView.setResults(dets));
+                                runOnUiThread(() -> {
+                                    // 把偵測結果從影像座標轉成 OverlayView 座標
+                                    if (currentBitmap != null) {
+                                        int imgW = currentBitmap.getWidth();
+                                        int imgH = currentBitmap.getHeight();
+                                        List<DetectorMain.Recognition> viewResults = toOverlayResults(dets, imgW, imgH);
+                                        overlayView.setResults(viewResults);
+                                    } else {
+                                        overlayView.setResults(dets);
+                                    }
+                                });
                             });
 
                         } catch (Throwable e) {
