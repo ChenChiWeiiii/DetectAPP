@@ -242,6 +242,7 @@ public class MainActivity extends AppCompatActivity {
     private float currentLinearZoom = 0.35f; // 依機型微調，約 1.7~2.0x
     private final java.util.concurrent.atomic.AtomicReference<List<DetectorMain.Recognition>> lastStableResults =
             new java.util.concurrent.atomic.AtomicReference<>();
+    private final List<DetectorMain.Recognition> activeBoxes = new ArrayList<>();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -497,46 +498,38 @@ public class MainActivity extends AppCompatActivity {
                             cvExecutor.execute(() -> {
                                 List<DetectorMain.Recognition> dets = lastDetections.get();
 
-                                // ✅ 若 YOLO 暫時沒有結果，仍沿用上一幀（避免紅框閃爍）
-                                List<DetectorMain.Recognition> detCopy;
-                                if (dets == null || dets.isEmpty()) {
-                                    detCopy = lastStableResults.get();
-                                    if (detCopy == null) return; // 第一次還沒有任何結果
-                                } else {
-                                    // ✅ 複製 YOLO 結果（避免多執行緒修改同一物件）
-                                    detCopy = new ArrayList<>();
+                                // --- 如果 YOLO 有新結果 ---
+                                if (dets != null && !dets.isEmpty()) {
+                                    activeBoxes.clear();
                                     for (DetectorMain.Recognition r : dets) {
-                                        DetectorMain.Recognition c = new DetectorMain.Recognition(
-                                                r.getId(), r.getTitle(), r.getConfidence(), new RectF(r.getLocation()));
-                                        c.setColor(r.getColor());
-                                        c.setColorStrength(r.getColorStrength());
-                                        detCopy.add(c);
+                                        if ("traffic_light".equals(r.getTitle())) {
+                                            // 顏色分析
+                                            TLColor tc = detectTrafficLightColor(currentBitmap, r.getLocation());
+                                            r.setColor(tc.color);
+                                            r.setColorStrength((float) tc.strength);
+                                            activeBoxes.add(r);
+                                        }
                                     }
-                                    lastStableResults.set(detCopy);
+                                } else {
+                                    // --- 沒有新 YOLO 結果：沿用舊框並讓它微移動（模擬追蹤） ---
+                                    for (DetectorMain.Recognition r : activeBoxes) {
+                                        RectF loc = r.getLocation();
+                                        float dx = (float)(Math.random() * 2 - 1);
+                                        float dy = (float)(Math.random() * 2 - 1);
+                                        loc.offset(dx, dy);
+                                        r.setLocation(loc);
+                                    }
                                 }
 
-                                // 取出交通號誌
-                                List<DetectorMain.Recognition> tls = new ArrayList<>();
-                                for (DetectorMain.Recognition r : dets) {
-                                    if ("traffic_light".equals(r.getTitle())) tls.add(r);
-                                }
-
-                                // 顏色分析
-                                for (DetectorMain.Recognition r : tls) {
-                                    TLColor tc = detectTrafficLightColor(currentBitmap, r.getLocation());
-                                    r.setColor(tc.color);
-                                    r.setColorStrength((float) tc.strength);
-                                }
-
-                                // ✅ 更新畫面（保持轉換）
+                                // --- 更新畫面（不清空框） ---
                                 runOnUiThread(() -> {
                                     if (currentBitmap != null) {
                                         int imgW = currentBitmap.getWidth();
                                         int imgH = currentBitmap.getHeight();
-                                        List<DetectorMain.Recognition> viewResults = toOverlayResults(dets, imgW, imgH);
+                                        List<DetectorMain.Recognition> viewResults = toOverlayResults(activeBoxes, imgW, imgH);
                                         overlayView.setResults(viewResults);
                                     } else {
-                                        overlayView.setResults(dets);
+                                        overlayView.setResults(activeBoxes);
                                     }
                                 });
                             });

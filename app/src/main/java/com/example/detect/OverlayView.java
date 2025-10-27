@@ -133,5 +133,6 @@ public class OverlayView extends View {
                 }
             }
         }
+        postInvalidateDelayed(33);
     }
 }
