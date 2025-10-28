@@ -5,6 +5,8 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.RectF;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.AttributeSet;
 import android.view.View;
 import android.util.Log;
@@ -17,6 +19,9 @@ public class OverlayView extends View {
     private Paint textPaint;
     // 紀錄預設文字顏色
     private final int defaultTextColor = Color.YELLOW;
+    // 平滑框紀錄
+    private final java.util.Map<String, RectF> lastBoxes = new java.util.HashMap<>();
+
 
     public OverlayView(Context context, AttributeSet attrs) {
         super(context, attrs);
@@ -70,9 +75,10 @@ public class OverlayView extends View {
                     float hView = box.height();
                     float hImg  = hView / scale;
 
-                    float d = MainActivity.estimateDistanceForHeightPx(
+                    float estimatedD = MainActivity.estimateDistanceForHeightPx(
                             fPxY, calib, hImg, MainActivity.H_TL_LAMP
                     );
+                    float d = smoothDistance(result.getTitle(), estimatedD);
 
                     String color = result.getColor();
                     int textColor = Color.WHITE;
@@ -95,9 +101,10 @@ public class OverlayView extends View {
                     float hView = box.height();
                     float hImg  = hView / scale;
 
-                    float d = MainActivity.estimateDistanceForHeightPx(
+                    float estimatedD = MainActivity.estimateDistanceForHeightPx(
                             fPxY, calib, hImg, MainActivity.H_PERSON
                     );
+                    float d = smoothDistance(result.getTitle(), estimatedD);
 
                     // 顏色：青色（或白色）
                     textPaint.setColor(Color.CYAN);
@@ -118,8 +125,9 @@ public class OverlayView extends View {
 
                     // d ≈ (H_CAMERA * fPy) / (y_img_bottom - c_y) ；需 y_img_bottom > c_y
                     float denom = (yBottomImg - cy);
-                    float d = (denom > 1f) ? (MainActivity.H_CAMERA * fPxY / denom) : -1f;
-                    if (d > 0) d *= calib; // 套校準比例
+                    float estimatedD = (denom > 1f) ? (MainActivity.H_CAMERA * fPxY / denom) : -1f;
+                    if (estimatedD > 0) estimatedD *= calib;
+                    float d = smoothDistance(result.getTitle(), estimatedD);
 
                     textPaint.setColor(Color.WHITE);
                     canvas.drawText(
@@ -131,4 +139,69 @@ public class OverlayView extends View {
             }
         }
     }
+
+    private RectF smoothBox(String key, RectF newBox) {
+        RectF old = lastBoxes.get(key);
+        if (old == null) {
+            lastBoxes.put(key, new RectF(newBox));
+            return newBox;
+        }
+
+        // 若偏移太大（失鎖），直接更新
+        float maxShift = 0.3f * old.height();
+        if (Math.abs(newBox.centerX() - old.centerX()) > maxShift ||
+                Math.abs(newBox.centerY() - old.centerY()) > maxShift) {
+            lastBoxes.put(key, new RectF(newBox));
+            return newBox;
+        }
+
+        // 否則進行平滑插值
+        float alpha = 0.75f; // 越大越穩定（但反應較慢）
+        RectF smoothed = new RectF(
+                old.left * alpha + newBox.left * (1 - alpha),
+                old.top * alpha + newBox.top * (1 - alpha),
+                old.right * alpha + newBox.right * (1 - alpha),
+                old.bottom * alpha + newBox.bottom * (1 - alpha)
+        );
+        lastBoxes.put(key, new RectF(smoothed));
+        return smoothed;
+    }
+
+    private final java.util.Map<String, Float> lastDistance = new java.util.HashMap<>();
+
+    private float smoothDistance(String key, float newD) {
+        if (newD <= 0) return newD;
+        Float old = lastDistance.get(key);
+        if (old == null) {
+            lastDistance.put(key, newD);
+            return newD;
+        }
+        float alpha = 0.7f; // 越大越穩定（但變化慢）
+        float smoothed = old * alpha + newD * (1 - alpha);
+        lastDistance.put(key, smoothed);
+        return smoothed;
+    }
+
+    private final Handler redrawHandler = new Handler(Looper.getMainLooper());
+    private static final long FRAME_INTERVAL_MS = 16; // 約 60FPS
+
+    private final Runnable redrawLoop = new Runnable() {
+        @Override public void run() {
+            invalidate();
+            redrawHandler.postDelayed(this, FRAME_INTERVAL_MS);
+        }
+    };
+
+    @Override
+    protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        redrawHandler.post(redrawLoop);
+    }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        super.onDetachedFromWindow();
+        redrawHandler.removeCallbacks(redrawLoop);
+    }
+
 }

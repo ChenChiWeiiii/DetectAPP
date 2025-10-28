@@ -93,9 +93,6 @@ import androidx.camera.camera2.interop.ExperimentalCamera2Interop;
 import android.media.AudioAttributes;
 import android.net.Uri;
 import android.provider.Settings;
-import com.example.detect.geo.SignalPoint;
-import com.example.detect.geo.SignalRepository;
-import com.example.detect.geo.SignalProximityManager;
 import retrofit2.Retrofit;
 import retrofit2.converter.gson.GsonConverterFactory;
 import androidx.camera.core.MeteringPoint;
@@ -104,8 +101,6 @@ import androidx.camera.core.FocusMeteringAction;
 
 @OptIn(markerClass = ExperimentalCamera2Interop.class)
 public class MainActivity extends AppCompatActivity {
-    private SignalRepository signalRepo;
-    private SignalProximityManager signalPM;
     private PreviewView previewView;
     private OverlayView overlayView;
     private TextView tvSpeed;
@@ -215,7 +210,7 @@ public class MainActivity extends AppCompatActivity {
     private BluetoothGattCharacteristic vibChar = null;         // 震動用特徵值快取
     private final java.util.concurrent.atomic.AtomicBoolean analyzing = new java.util.concurrent.atomic.AtomicBoolean(false);
     private long lastAnalyzeMs = 0;
-    private static final long MIN_INTERVAL_MS = 66; // ~15 FPS，可依機型調整
+    private static final long MIN_INTERVAL_MS = 33; // ~15 FPS，可依機型調整
 
     private Bitmap rotatedBmp;
 
@@ -271,8 +266,6 @@ public class MainActivity extends AppCompatActivity {
         setContentView(R.layout.activity_main);
         Log.e("SpeedLimit", "BOOT onCreate()");
         initOverpassApi();
-        signalRepo = new SignalRepository(this);
-        signalRepo.loadFromAssets("export.geojson");
         createNotificationChannel();
         requestBtPermsIfNeeded();
         ensureMiBandConnected();
@@ -290,7 +283,6 @@ public class MainActivity extends AppCompatActivity {
                         == PackageManager.PERMISSION_GRANTED) {
             startCamera();
             startLocationUpdates();
-            startSignalProximity();
         } else {
             ActivityCompat.requestPermissions(this,
                     new String[]{ Manifest.permission.CAMERA,
@@ -446,7 +438,7 @@ public class MainActivity extends AppCompatActivity {
                     // 3. ImageAnalysis 設定
                     ImageAnalysis analysis = new ImageAnalysis.Builder()
                             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                            .setTargetResolution(new android.util.Size(1920, 1080)) // 需要再快可改 1280x720
+                            .setTargetResolution(new android.util.Size(1280, 720)) // 需要再快可改 1280x720
                             .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888) // ✅ 改 RGBA
                             .setImageQueueDepth(1)
                             .build();
@@ -551,18 +543,6 @@ public class MainActivity extends AppCompatActivity {
                                     if (r.getLocation().height() > maxTlH) maxTlH = r.getLocation().height();
                                 }
                             }
-
-//                            if (camera != null && maxTlH > 0) {
-//                                float err = TL_TARGET_HEIGHT_PX - maxTlH;
-//                                if (Math.abs(err) > 4f) { // 有明顯偏差才調
-//                                    float z = currentLinearZoom + Math.signum(err) * ZOOM_STEP;
-//                                    z = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
-//                                    if (Math.abs(z - currentLinearZoom) >= 0.01f) {
-//                                        currentLinearZoom = z;
-//                                        camera.getCameraControl().setLinearZoom(z);
-//                                    }
-//                                }
-//                            }
 
                             if (maxTlH > 0) lastTLHeightPx = maxTlH;
 
@@ -732,17 +712,6 @@ public class MainActivity extends AppCompatActivity {
         vBuffer.get(nv21, ySize, vSize);
         uBuffer.get(nv21, ySize + vSize, uSize);
 
-//        android.graphics.Rect crop = image.getCropRect();
-//
-//        YuvImage yuv = new YuvImage(nv21, ImageFormat.NV21,
-//                image.getWidth(), image.getHeight(), null);
-//        ByteArrayOutputStream out = new ByteArrayOutputStream();
-//        yuv.compressToJpeg(
-//                new android.graphics.Rect(0, 0, image.getWidth(), image.getHeight()),
-//                100,
-//                out
-//        );
-
         android.graphics.Rect crop = image.getCropRect();
 
         YuvImage yuv = new YuvImage(nv21, ImageFormat.NV21, image.getWidth(), image.getHeight(), null);
@@ -767,32 +736,39 @@ public class MainActivity extends AppCompatActivity {
     private final int[] ovLoc = new int[2];
 
     private RectF mapRectToOverlay(RectF imgRect, int imgW, int imgH) {
+        if (overlayView == null || previewView == null) {
+            return new RectF(imgRect);
+        }
+
         float viewW = overlayView.getWidth();
         float viewH = overlayView.getHeight();
 
-        // 與 PreviewView.FIT_CENTER 對應的 letterbox 縮放
-        float scale = Math.min(viewW / imgW, viewH / imgH);
+        if (viewW <= 0 || viewH <= 0 || imgW <= 0 || imgH <= 0) {
+            return new RectF(imgRect);
+        }
+
+        // 根據 PreviewView 的顯示模式 FIT_CENTER 計算 letterbox 縮放與偏移
+        float scaleX = viewW / imgW;
+        float scaleY = viewH / imgH;
+        float scale = Math.min(scaleX, scaleY);
+
+        // 修正上下或左右黑邊的偏移量
         float dx = (viewW - imgW * scale) / 2f;
         float dy = (viewH - imgH * scale) / 2f;
 
-        // 若 previewView 與 overlayView 在父容器位置不同，補上相對位移
-        previewView.getLocationInWindow(pvLoc);
-        overlayView.getLocationInWindow(ovLoc);
-        dx += (pvLoc[0] - ovLoc[0]);
-        dy += (pvLoc[1] - ovLoc[1]);
-
-        // 保留你既有的距離/顯示邏輯會用到的比例與偏移
+        // 更新給 OverlayView 內部距離計算用
         currentScale = scale;
         currentDx = dx;
         currentDy = dy;
 
         return new RectF(
-                imgRect.left   * scale + dx,
-                imgRect.top    * scale + dy,
-                imgRect.right  * scale + dx,
+                imgRect.left * scale + dx,
+                imgRect.top * scale + dy,
+                imgRect.right * scale + dx,
                 imgRect.bottom * scale + dy
         );
     }
+
     private List<DetectorMain.Recognition> toOverlayResults(
             List<DetectorMain.Recognition> src, int imgW, int imgH) {
         List<DetectorMain.Recognition> out = new ArrayList<>(src.size());
@@ -980,7 +956,6 @@ public class MainActivity extends AppCompatActivity {
             if (camOk) startCamera();
             if (locOk) {
                 startLocationUpdates();
-                startSignalProximity();   // 權限通過後啟動前方路口提醒
             }
             return;
         }
@@ -1330,7 +1305,6 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
-        if (signalPM != null) signalPM.stop();
         if (textToSpeech != null) {
             textToSpeech.stop();
             textToSpeech.shutdown();
@@ -1947,28 +1921,6 @@ public class MainActivity extends AppCompatActivity {
 
         // 其他像 GB:nsl_single、TW:urban 之類國別代碼先略過（需要對照表就再加）
         return null;
-    }
-
-    private void startSignalProximity() {
-        if (signalRepo == null) return;
-
-        signalPM = new SignalProximityManager(
-                this,
-                signalRepo,
-                (SignalPoint p, float dMeters) -> runOnUiThread(() -> {
-                    String msg = String.format(java.util.Locale.getDefault(),
-                            "前方 %.0f 公尺有路口", dMeters);
-                    Toast.makeText(MainActivity.this, msg, Toast.LENGTH_SHORT).show();
-                    if (isVoiceEnabled) {
-                        speakOnce("前方五十公尺有路口，請減速注意");
-                    }
-                    sendAlertNotification("前方路口", "距離約 " + (int)dMeters + " 公尺");
-                    if (isVibrationEnabled) {
-                        triggerMiBandVibration(); //呼叫手環
-                    }
-                })
-        );
-        signalPM.start();
     }
 
     private static class TLColor {
