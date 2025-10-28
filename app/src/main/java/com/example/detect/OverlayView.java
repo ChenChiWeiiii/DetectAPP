@@ -5,6 +5,8 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.RectF;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.AttributeSet;
 import android.view.View;
 import android.util.Log;
@@ -179,4 +181,27 @@ public class OverlayView extends View {
         lastDistance.put(key, smoothed);
         return smoothed;
     }
+
+    private final Handler redrawHandler = new Handler(Looper.getMainLooper());
+    private static final long FRAME_INTERVAL_MS = 16; // 約 60FPS
+
+    private final Runnable redrawLoop = new Runnable() {
+        @Override public void run() {
+            invalidate();
+            redrawHandler.postDelayed(this, FRAME_INTERVAL_MS);
+        }
+    };
+
+    @Override
+    protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        redrawHandler.post(redrawLoop);
+    }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        super.onDetachedFromWindow();
+        redrawHandler.removeCallbacks(redrawLoop);
+    }
+
 }
