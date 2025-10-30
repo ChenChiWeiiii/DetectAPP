@@ -210,7 +210,7 @@ public class MainActivity extends AppCompatActivity {
     private BluetoothGattCharacteristic vibChar = null;         // 震動用特徵值快取
     private final java.util.concurrent.atomic.AtomicBoolean analyzing = new java.util.concurrent.atomic.AtomicBoolean(false);
     private long lastAnalyzeMs = 0;
-    private static final long MIN_INTERVAL_MS = 33; // ~15 FPS，可依機型調整
+    private static final long MIN_INTERVAL_MS = 66; // ~15 FPS，可依機型調整
 
     private Bitmap rotatedBmp;
 
@@ -438,7 +438,7 @@ public class MainActivity extends AppCompatActivity {
                     // 3. ImageAnalysis 設定
                     ImageAnalysis analysis = new ImageAnalysis.Builder()
                             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                            .setTargetResolution(new android.util.Size(1280, 720)) // 需要再快可改 1280x720
+                            .setTargetResolution(new android.util.Size(1920, 1080)) // 需要再快可改 1280x720
                             .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888) // ✅ 改 RGBA
                             .setImageQueueDepth(1)
                             .build();
@@ -543,6 +543,18 @@ public class MainActivity extends AppCompatActivity {
                                     if (r.getLocation().height() > maxTlH) maxTlH = r.getLocation().height();
                                 }
                             }
+
+//                            if (camera != null && maxTlH > 0) {
+//                                float err = TL_TARGET_HEIGHT_PX - maxTlH;
+//                                if (Math.abs(err) > 4f) { // 有明顯偏差才調
+//                                    float z = currentLinearZoom + Math.signum(err) * ZOOM_STEP;
+//                                    z = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
+//                                    if (Math.abs(z - currentLinearZoom) >= 0.01f) {
+//                                        currentLinearZoom = z;
+//                                        camera.getCameraControl().setLinearZoom(z);
+//                                    }
+//                                }
+//                            }
 
                             if (maxTlH > 0) lastTLHeightPx = maxTlH;
 
@@ -712,6 +724,17 @@ public class MainActivity extends AppCompatActivity {
         vBuffer.get(nv21, ySize, vSize);
         uBuffer.get(nv21, ySize + vSize, uSize);
 
+//        android.graphics.Rect crop = image.getCropRect();
+//
+//        YuvImage yuv = new YuvImage(nv21, ImageFormat.NV21,
+//                image.getWidth(), image.getHeight(), null);
+//        ByteArrayOutputStream out = new ByteArrayOutputStream();
+//        yuv.compressToJpeg(
+//                new android.graphics.Rect(0, 0, image.getWidth(), image.getHeight()),
+//                100,
+//                out
+//        );
+
         android.graphics.Rect crop = image.getCropRect();
 
         YuvImage yuv = new YuvImage(nv21, ImageFormat.NV21, image.getWidth(), image.getHeight(), null);
@@ -736,39 +759,32 @@ public class MainActivity extends AppCompatActivity {
     private final int[] ovLoc = new int[2];
 
     private RectF mapRectToOverlay(RectF imgRect, int imgW, int imgH) {
-        if (overlayView == null || previewView == null) {
-            return new RectF(imgRect);
-        }
-
         float viewW = overlayView.getWidth();
         float viewH = overlayView.getHeight();
 
-        if (viewW <= 0 || viewH <= 0 || imgW <= 0 || imgH <= 0) {
-            return new RectF(imgRect);
-        }
-
-        // 根據 PreviewView 的顯示模式 FIT_CENTER 計算 letterbox 縮放與偏移
-        float scaleX = viewW / imgW;
-        float scaleY = viewH / imgH;
-        float scale = Math.min(scaleX, scaleY);
-
-        // 修正上下或左右黑邊的偏移量
+        // 與 PreviewView.FIT_CENTER 對應的 letterbox 縮放
+        float scale = Math.min(viewW / imgW, viewH / imgH);
         float dx = (viewW - imgW * scale) / 2f;
         float dy = (viewH - imgH * scale) / 2f;
 
-        // 更新給 OverlayView 內部距離計算用
+        // 若 previewView 與 overlayView 在父容器位置不同，補上相對位移
+        previewView.getLocationInWindow(pvLoc);
+        overlayView.getLocationInWindow(ovLoc);
+        dx += (pvLoc[0] - ovLoc[0]);
+        dy += (pvLoc[1] - ovLoc[1]);
+
+        // 保留你既有的距離/顯示邏輯會用到的比例與偏移
         currentScale = scale;
         currentDx = dx;
         currentDy = dy;
 
         return new RectF(
-                imgRect.left * scale + dx,
-                imgRect.top * scale + dy,
-                imgRect.right * scale + dx,
+                imgRect.left   * scale + dx,
+                imgRect.top    * scale + dy,
+                imgRect.right  * scale + dx,
                 imgRect.bottom * scale + dy
         );
     }
-
     private List<DetectorMain.Recognition> toOverlayResults(
             List<DetectorMain.Recognition> src, int imgW, int imgH) {
         List<DetectorMain.Recognition> out = new ArrayList<>(src.size());
