@@ -31,7 +31,7 @@
     <ScrollView
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:layout_marginTop="160dp"
+        android:layout_marginTop="65dp"
         android:layout_marginBottom="60dp"
         android:layout_alignParentTop="true"
         android:layout_alignParentBottom="true"
@@ -49,9 +49,9 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Create Account"
-                android:textSize="24sp"
+                android:textSize="24dp"
                 android:textStyle="bold"
-                android:layout_marginTop="48dp"
+                android:layout_marginTop="12dp"
                 android:layout_gravity="center_horizontal" />
 
             <EditText
@@ -104,8 +104,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="43dp"
                 android:layout_marginTop="24dp"
-                android:layout_marginLeft="127dp"
-                android:layout_gravity="center_horizontal"
+                android:layout_gravity="end"
                 android:orientation="horizontal"
                 android:gravity="center_vertical"
                 android:clickable="true"
@@ -119,7 +118,7 @@
                     android:layout_height="wrap_content"
                     android:text="Sign Up"
                     android:textColor="#FFFFFF"
-                    android:textSize="14sp"
+                    android:textSize="14dp"
                     android:paddingStart="16dp"
                     android:paddingEnd="8dp" />
 
@@ -130,7 +129,7 @@
                     android:layout_height="wrap_content"
                     android:text="→"
                     android:textColor="#FFFFFF"
-                    android:textSize="14sp"
+                    android:textSize="14dp"
                     android:paddingStart="8dp"
                     android:paddingEnd="16dp" />
             </LinearLayout>
@@ -141,6 +140,7 @@
                 android:layout_height="wrap_content"
                 android:text="Already have an account? Login"
                 android:textColor="#1E88E5"
+                android:textSize="14dp"
                 android:layout_marginTop="16dp"
                 android:layout_gravity="center_horizontal" />
 

@@ -100,7 +100,6 @@
                 android:layout_height="43dp"
                 android:layout_marginTop="24dp"
                 android:layout_gravity="end"
-                android:layout_marginEnd="24dp"
                 android:background="@drawable/gradient_button"
                 android:clickable="true"
                 android:focusable="true"
