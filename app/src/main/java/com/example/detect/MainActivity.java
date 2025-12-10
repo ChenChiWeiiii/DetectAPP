@@ -132,11 +132,12 @@ public class MainActivity extends AppCompatActivity {
     private static final float INITIAL_ZOOM = 1.8f;   // 綁定相機後套用的預設變焦
     private static final int   TARGET_W     = 1920;   // 影像分析輸入寬
     private static final int   TARGET_H     = 1080;   // 影像分析輸入高
+
     private static final float TL_CONF   = 0.28f;     // 交通號誌專屬信心門檻（遠距離小物件通常較低）
     private static final float IOU_NMS   = 0.80f;     // NMS IoU
     private static final int   MIN_BOX_PX = 8;        // 最小框像素，避免噪聲
     // 顏色判斷穩定化
-    private static final float  TL_ROI_INSET    = 0.08f;   // 裁一圈，避開邊框/反光（15%）
+    private static final float  TL_ROI_INSET    = 0.08f;   // 裁一圈，避開邊框/反光（8%）
     private static final double TL_MIN_RATIO    = 0.03;    // 原本 0.06 → 0.03
     private static final double TL_MIN_GAP      = 0.015;   // 原本 0.025 → 0.015
     private static final int    TL_MIN_TOTALPX  = 6;       // 原本 12 → 6
@@ -184,6 +185,7 @@ public class MainActivity extends AppCompatActivity {
     public static final float H_TL_LAMP = 0.30f;
     private float calibScale = 1.0f;
     private float lastTLHeightPx = -1f;
+
     private float currentScale = 1f;
     public float getCurrentScale() { return currentScale; }
     // 影像座標還原需要用到
@@ -285,7 +287,6 @@ public class MainActivity extends AppCompatActivity {
         }
 
         if (detector == null ) {
-            Toast.makeText(this, "模型載入失敗，請確認 assets 資料夾內有 best_float16.tflite", Toast.LENGTH_LONG).show();
             finish();
             return;
         }
@@ -293,8 +294,6 @@ public class MainActivity extends AppCompatActivity {
         textToSpeech = new TextToSpeech(this, status -> {
             if (status == TextToSpeech.SUCCESS) {
                 textToSpeech.setLanguage(java.util.Locale.TAIWAN); // 使用中文語音
-            } else {
-                Toast.makeText(this, "語音初始化失敗", Toast.LENGTH_SHORT).show();
             }
         });
         //初始化藍牙並請求權限
@@ -812,26 +811,21 @@ public class MainActivity extends AppCompatActivity {
                             @Override
                             public void onResponse(Call<Void> call, Response<Void> response) {
                                 if (response.isSuccessful()) {
-                                    Toast.makeText(MainActivity.this, "設定已同步到後端", Toast.LENGTH_SHORT).show();
                                     dialog.dismiss();
-                                } else {
-                                    Toast.makeText(MainActivity.this, "提醒設定同步失敗", Toast.LENGTH_SHORT).show();
                                 }
                             }
 
                             @Override
                             public void onFailure(Call<Void> call, Throwable t) {
-                                Toast.makeText(MainActivity.this, "連線失敗：" + t.getMessage(), Toast.LENGTH_SHORT).show();
+                                Toast.makeText(MainActivity.this, "連線失敗!", Toast.LENGTH_SHORT).show();
                             }
                         });
-                    } else {
-                        Toast.makeText(MainActivity.this, "靈敏度同步失敗", Toast.LENGTH_SHORT).show();
                     }
                 }
 
                 @Override
                 public void onFailure(Call<Void> call, Throwable t) {
-                    Toast.makeText(MainActivity.this, "連線失敗：" + t.getMessage(), Toast.LENGTH_SHORT).show();
+                    Toast.makeText(MainActivity.this, "連線失敗!", Toast.LENGTH_SHORT).show();
                 }
             });
         });

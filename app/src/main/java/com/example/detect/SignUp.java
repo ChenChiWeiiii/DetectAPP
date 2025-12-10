@@ -63,109 +63,104 @@ public class SignUp extends AppCompatActivity {
                 return;
             }
 
-            AlertDialog.Builder builder = new AlertDialog.Builder(SignUp.this);
-            View dialogView = getLayoutInflater().inflate(R.layout.dialog_vertify, null);
-            builder.setView(dialogView);
-            AlertDialog dialog = builder.create();
-            dialog.setCancelable(false);
-            dialog.show();
-
-            TextView emailDisplay  = dialogView.findViewById(R.id.emailDisplay);
-            EditText etCodeInput   = dialogView.findViewById(R.id.etCodeInput);
-            TextView btnVerify     = dialogView.findViewById(R.id.btnVerify);
-            TextView tvResend      = dialogView.findViewById(R.id.tvResend);
-            TextView tvCountdown   = dialogView.findViewById(R.id.tvCountdown);
-            ImageButton btnClose   = dialogView.findViewById(R.id.btnCloseDialog);
-
-            tvResend.post(() -> {
-                int width = tvResend.getWidth();
-                Shader shader = new LinearGradient(
-                        0, 0, width, 0,
-                        new int[]{Color.parseColor("#A259FF"), Color.parseColor("#CF78FF")},
-                        null,
-                        Shader.TileMode.CLAMP
-                );
-                tvResend.getPaint().setShader(shader);
-                tvResend.invalidate();
-            });
-
-            emailDisplay.setText("正在發送驗證碼到：" + email);
-            btnVerify.setEnabled(false);
-            tvResend.setEnabled(true);
-            tvCountdown.setVisibility(View.GONE);
-
             ApiService api = RetrofitClient.getInstance().create(ApiService.class);
 
             api.precheck(new PrecheckRequest(userId, email)).enqueue(new Callback<Void>() {
                 @Override
                 public void onResponse(Call<Void> call, Response<Void> resp) {
                     if (resp.isSuccessful()) {
+                        AlertDialog.Builder builder = new AlertDialog.Builder(SignUp.this);
+                        View dialogView = getLayoutInflater().inflate(R.layout.dialog_vertify, null);
+                        builder.setView(dialogView);
+                        AlertDialog dialog = builder.create();
+                        dialog.setCancelable(false);
+                        dialog.show();
+
+                        TextView emailDisplay  = dialogView.findViewById(R.id.emailDisplay);
+                        EditText etCodeInput   = dialogView.findViewById(R.id.etCodeInput);
+                        TextView btnVerify     = dialogView.findViewById(R.id.btnVerify);
+                        TextView tvResend      = dialogView.findViewById(R.id.tvResend);
+                        TextView tvCountdown   = dialogView.findViewById(R.id.tvCountdown);
+                        ImageButton btnClose   = dialogView.findViewById(R.id.btnCloseDialog);
+
+                        tvResend.post(() -> {
+                            int width = tvResend.getWidth();
+                            Shader shader = new LinearGradient(
+                                    0, 0, width, 0,
+                                    new int[]{Color.parseColor("#A259FF"), Color.parseColor("#CF78FF")},
+                                    null,
+                                    Shader.TileMode.CLAMP
+                            );
+                            tvResend.getPaint().setShader(shader);
+                            tvResend.invalidate();
+                        });
+
+                        emailDisplay.setText("正在發送驗證碼到：" + email);
+                        btnVerify.setEnabled(false);
+                        tvResend.setEnabled(true);
+                        tvCountdown.setVisibility(View.GONE);
                         emailDisplay.setText("驗證碼已寄至：" + email);
                         btnVerify.setEnabled(true);
+                        btnClose.setOnClickListener(x -> dialog.dismiss());
+
+                        btnVerify.setOnClickListener(x -> {
+                            String code = etCodeInput.getText().toString().trim();
+                            if (code.isEmpty()) {
+                                Toast.makeText(SignUp.this, "請輸入驗證碼", Toast.LENGTH_SHORT).show();
+                                return;
+                            }
+
+                            // ✅ 直接進行註冊，不再呼叫 verifyCode API
+                            api.signUp(new SignUpRequest(userId, email, password, code)).enqueue(new Callback<Void>() {
+                                @Override
+                                public void onResponse(Call<Void> c, Response<Void> r) {
+                                    if (r.isSuccessful()) {
+                                        Toast.makeText(SignUp.this, "註冊完成", Toast.LENGTH_SHORT).show();
+                                        dialog.dismiss();
+                                        startActivity(new Intent(SignUp.this, SignIn.class));
+                                        finish();
+                                    } else {
+                                        Toast.makeText(SignUp.this, "註冊失敗：" + getErrorMessage(r), Toast.LENGTH_SHORT).show();
+                                    }
+                                }
+
+                                @Override
+                                public void onFailure(Call<Void> c, Throwable t) {
+                                    Toast.makeText(SignUp.this, "註冊連線失敗：" + t.getMessage(), Toast.LENGTH_SHORT).show();
+                                }
+                            });
+                        });
+
+                        tvResend.setOnClickListener(x -> {
+                            tvResend.setEnabled(false);
+                            tvResend.setVisibility(View.GONE);
+                            tvCountdown.setVisibility(View.VISIBLE);
+                            startCountdown(tvCountdown, tvResend);
+
+                            api.precheck(new PrecheckRequest(userId, email)).enqueue(new Callback<Void>() {
+                                @Override
+                                public void onResponse(Call<Void> call, Response<Void> resp) {
+                                    if (resp.isSuccessful()) {
+                                        Toast.makeText(SignUp.this, "已重新寄出驗證碼", Toast.LENGTH_SHORT).show();
+                                    } else {
+                                        Toast.makeText(SignUp.this, "重發失敗：" + getErrorMessage(resp), Toast.LENGTH_SHORT).show();
+                                    }
+                                }
+
+                                @Override
+                                public void onFailure(Call<Void> call, Throwable t) {
+                                    Toast.makeText(SignUp.this, "連線失敗：" + t.getMessage(), Toast.LENGTH_SHORT).show();
+                                }
+                            });
+                        });
                     } else {
                         Toast.makeText(SignUp.this, "註冊失敗：" + getErrorMessage(resp), Toast.LENGTH_SHORT).show();
-                        dialog.dismiss();
                     }
                 }
-
                 @Override
                 public void onFailure(Call<Void> call, Throwable t) {
                     Toast.makeText(SignUp.this, "連線失敗：" + t.getMessage(), Toast.LENGTH_SHORT).show();
-                    dialog.dismiss();
                 }
-            });
-
-            btnClose.setOnClickListener(x -> dialog.dismiss());
-
-            btnVerify.setOnClickListener(x -> {
-                String code = etCodeInput.getText().toString().trim();
-                if (code.isEmpty()) {
-                    Toast.makeText(SignUp.this, "請輸入驗證碼", Toast.LENGTH_SHORT).show();
-                    return;
-                }
-
-                // ✅ 直接進行註冊，不再呼叫 verifyCode API
-                api.signUp(new SignUpRequest(userId, email, password, code)).enqueue(new Callback<Void>() {
-                    @Override
-                    public void onResponse(Call<Void> c, Response<Void> r) {
-                        if (r.isSuccessful()) {
-                            Toast.makeText(SignUp.this, "註冊完成", Toast.LENGTH_SHORT).show();
-                            dialog.dismiss();
-                            startActivity(new Intent(SignUp.this, SignIn.class));
-                            finish();
-                        } else {
-                            Toast.makeText(SignUp.this, "註冊失敗：" + getErrorMessage(r), Toast.LENGTH_SHORT).show();
-                        }
-                    }
-
-                    @Override
-                    public void onFailure(Call<Void> c, Throwable t) {
-                        Toast.makeText(SignUp.this, "註冊連線失敗：" + t.getMessage(), Toast.LENGTH_SHORT).show();
-                    }
-                });
-            });
-
-            tvResend.setOnClickListener(x -> {
-                tvResend.setEnabled(false);
-                tvResend.setVisibility(View.GONE);
-                tvCountdown.setVisibility(View.VISIBLE);
-                startCountdown(tvCountdown, tvResend);
-
-                api.precheck(new PrecheckRequest(userId, email)).enqueue(new Callback<Void>() {
-                    @Override
-                    public void onResponse(Call<Void> call, Response<Void> resp) {
-                        if (resp.isSuccessful()) {
-                            Toast.makeText(SignUp.this, "已重新寄出驗證碼", Toast.LENGTH_SHORT).show();
-                        } else {
-                            Toast.makeText(SignUp.this, "重發失敗：" + getErrorMessage(resp), Toast.LENGTH_SHORT).show();
-                        }
-                    }
-
-                    @Override
-                    public void onFailure(Call<Void> call, Throwable t) {
-                        Toast.makeText(SignUp.this, "連線失敗：" + t.getMessage(), Toast.LENGTH_SHORT).show();
-                    }
-                });
             });
         });
     }
