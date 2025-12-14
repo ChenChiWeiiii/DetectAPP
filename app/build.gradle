@@ -36,7 +36,7 @@ dependencies {
     implementation libs.activity
     implementation libs.constraintlayout
 
-    implementation project(':sdk2')
+    implementation project(':sdk')
 
     testImplementation libs.junit
     androidTestImplementation libs.ext.junit
@@ -61,5 +61,8 @@ dependencies {
     // implementation "androidx.camera:camera-extensions:1.3.4"
 
     // TFLite
-    implementation 'org.tensorflow:tensorflow-lite:2.13.0'
+    implementation 'org.tensorflow:tensorflow-lite:2.14.0'
+    implementation 'org.tensorflow:tensorflow-lite-gpu:2.14.0'
+    implementation 'org.tensorflow:tensorflow-lite-select-tf-ops:2.14.0'
+    implementation 'org.tensorflow:tensorflow-lite-gpu-api:2.14.0'
 }

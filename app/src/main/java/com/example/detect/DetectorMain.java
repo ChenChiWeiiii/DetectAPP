@@ -32,11 +32,11 @@ public class DetectorMain {
     private final List<String> labels;
     private final String modelType;
 
-    // --- 重用緩衝 ---
+    // ---   滨鍂蝺抵   ---
     private ByteBuffer inputBuffer;                 // (float32) 640*640*3*4 bytes
     private int[] pixels;                           // 640*640
-    private final Bitmap resizedBitmap;             // 640x640，避免每幀新建
-    private final Rect srcRect = new Rect();        // 畫布縮放時重用
+    private final Bitmap resizedBitmap;             // 640x640嚗屸 踹 齿 誩  鰵撱
+    private final Rect srcRect = new Rect();        //  𧞄撣 蝮格𦆮    滨鍂
     private final Rect dstRect = new Rect(0, 0, INPUT_SIZE, INPUT_SIZE);
 
     private Delegate delegate = null;
@@ -45,13 +45,13 @@ public class DetectorMain {
         this.modelType = modelType;
         MappedByteBuffer modelBuffer = loadModelFile(assetManager, modelName);
 
-        // Interpreter 設定
+        // Interpreter 閮剖
         Interpreter.Options opts = new Interpreter.Options();
         opts.setUseXNNPACK(true);
         int threads = Math.max(2, Runtime.getRuntime().availableProcessors() / 2);
         opts.setNumThreads(threads);
 
-        // 嘗試 GPU -> NNAPI -> CPU
+        //   𡑒岫 GPU -> NNAPI -> CPU
         boolean attached = false;
         try {
             delegate = new GpuDelegate();
@@ -76,13 +76,13 @@ public class DetectorMain {
 
         interpreter = new Interpreter(modelBuffer, opts);
 
-        // 標籤
+        // 璅嗵惜
         labels = new ArrayList<>();
         labels.add("crosswalk");
         labels.add("person");
         labels.add("traffic_light");
 
-        // --- 初始化重用緩衝 ---
+        // ---   嘥 见 㚚 滨鍂蝺抵   ---
         inputBuffer = ByteBuffer.allocateDirect(4 * INPUT_SIZE * INPUT_SIZE * 3);
         inputBuffer.order(ByteOrder.nativeOrder());
         pixels = new int[INPUT_SIZE * INPUT_SIZE];
@@ -97,17 +97,17 @@ public class DetectorMain {
         }
     }
 
-    /** 把 bitmap 直接畫到可重用的 640x640 Bitmap，再轉成 float32 NHWC */
+    /**     bitmap  凒 𦻖 𧞄   虾  滨鍂   640x640 Bitmap嚗  滩 㗇   float32 NHWC */
     private ByteBuffer bitmapToFloatBuffer(Bitmap bitmap) {
-        // 1) 把原圖縮到 640x640 的 reused bitmap，不產生臨時 Bitmap
+        // 1)   𠰴 笔 𣇉葬   640x640    reused bitmap嚗䔶 滨𤩎  蠘𠪊   Bitmap
         srcRect.set(0, 0, bitmap.getWidth(), bitmap.getHeight());
         Canvas c = new Canvas(resizedBitmap);
         c.drawBitmap(bitmap, srcRect, dstRect, null);
 
-        // 2) 讀像素到重用的 int[]
+        // 2) 霈  讐 惩   滨鍂   int[]
         resizedBitmap.getPixels(pixels, 0, INPUT_SIZE, 0, 0, INPUT_SIZE, INPUT_SIZE);
 
-        // 3) 填入重用的 ByteBuffer（RGB、0~1）
+        // 3) 憛怠 仿 滨鍂   ByteBuffer嚗㇌GB  0~1嚗
         inputBuffer.rewind();
         final int total = INPUT_SIZE * INPUT_SIZE;
         for (int i = 0; i < total; i++) {
@@ -165,7 +165,7 @@ public class DetectorMain {
         private String title;
         private final float confidence;
         private RectF location;
-        private String color = "unknown";  // 燈號顏色
+        private String color = "unknown";  //     罸 讛𠧧
 
         public Recognition(String id, String title, float confidence, RectF location) {
             this.id = id;

@@ -122,53 +122,51 @@ public class MainActivity extends AppCompatActivity {
     private BluetoothAdapter bluetoothAdapter;
     private BluetoothLeScanner bluetoothLeScanner;
     private BluetoothGatt bluetoothGatt;
-    private final String targetDeviceName = "Mi Smart Band"; // 可改成你實際的裝置名稱
+    private final String targetDeviceName = "Mi Smart Band"; //  虾 㺿  𣂷 惩祕  𤤿 鋆萘蔭  滨迂
     private static final int REQUEST_BLUETOOTH_PERMISSIONS = 1001;
     private androidx.camera.core.Camera camera;
 
-    // ==== 超速提醒 ====
+    // ==== 頞    鞾   ====
     private SpeedAlertManager speedMgr;
     // ---- Long-distance TL tuning ----
-    private static final float INITIAL_ZOOM = 1.8f;   // 綁定相機後套用的預設變焦
-    private static final int   TARGET_W     = 1920;   // 影像分析輸入寬
-    private static final int   TARGET_H     = 1080;   // 影像分析輸入高
+    private static final float INITIAL_ZOOM = 1.8f;   // 蝬 摰𡁶㮾璈笔   㛖鍂    鞱身霈羓
+    private static final int   TARGET_W     = 1920;   // 敶勗 誩   鞱撓 亙祝
+    private static final int   TARGET_H     = 1080;   // 敶勗 誩   鞱撓 仿
 
-    private static final float TL_CONF   = 0.28f;     // 交通號誌專屬信心門檻（遠距離小物件通常較低）
+    private static final float TL_CONF   = 0.28f;     // 鈭日 朞 蠘    惇靽∪   瑼鳴   㰘 嗪𣪧撠讐 隞園 𡁜虜頛 雿𠬍
     private static final float IOU_NMS   = 0.80f;     // NMS IoU
-    private static final int   MIN_BOX_PX = 8;        // 最小框像素，避免噪聲
-    // 顏色判斷穩定化
-    private static final float  TL_ROI_INSET    = 0.08f;   // 裁一圈，避開邊框/反光（8%）
-    private static final double TL_MIN_RATIO    = 0.03;    // 原本 0.06 → 0.03
-    private static final double TL_MIN_GAP      = 0.015;   // 原本 0.025 → 0.015
-    private static final int    TL_MIN_TOTALPX  = 6;       // 原本 12 → 6
+    private static final int   MIN_BOX_PX = 8;        //   撠𤩺  讐 𩤃 屸 踹 滚臁
+    // 憿讛𠧧 ế 𪃾蝛拙 𡁜
+    private static final float TL_ROI_INSET = 0.04f;      // 減少裁切
+    private static final double TL_MIN_RATIO = 0.018;     // 放寬比例
+    private static final double TL_MIN_GAP = 0.008;       // 放寬差距
+    private static final int TL_MIN_TOTALPX = 4;          // 降低最小像素
+    private static final float TRACK_IOU_MATCH = 0.35f;  // 放寬匹配，減少 track 丟失
+    private static final int COLOR_CONFIRM_FRAMES = 1;    // 加快確認
+    private static final int COLOR_HOLD_FRAMES = 15;      // 增加穩定時間
 
-    // 追蹤/投票去抖
-    private static final float  TRACK_IOU_MATCH = 0.30f;   // 降低到 0.3，比較容易續上同一盞燈
-    private static final int    COLOR_CONFIRM_FRAMES = 3;  // 變色需連續 N 幀
-    private static final int    COLOR_HOLD_FRAMES    = 8;  // 確認後至少維持 M 幀
-
-    // 平鋪推論（不換模型也能增距）
-    private static final int TILE_COLS = 2;           // 先用 2×2；效能足夠再升 3×3
+    // 撟喲𪊽 綫隢吔   齿 𥟇芋  衤 蠘 賢 噼 嘅
+    private static final int TILE_COLS = 2;           //   鍂 2  2嚗𥟇   質雲憭惩 滚   3  3
     private static final int TILE_ROWS = 2;
-    private static final int TILE_OVERLAP = 40;       // 邊緣重疊，避免切到一半
+    private static final int TILE_OVERLAP = 40;       //  羓楠  滨 𠺪 屸 踹 滚   銝
 
-    // 多幀投票（讓顏色更穩）
-    private int frameIndex = 0;                       // 逐幀累加
-    private static final int TRACK_TTL = 10;          // 追蹤幀數存活
+    // 憭𡁜   閧巨嚗  㯄 讛𠧧 凒蝛抬
+    private int frameIndex = 0;                       //  𣂼 蝝臬
+    private static final int TRACK_TTL = 20;
 
     private static class TLTrack {
         RectF box;
         int seenFrame;
-        int[] votes = new int[4]; // 保留
-        int stable = 0;           // 目前穩定色 (0/1/2/3)
-        int cand   = 0;           // 當前候選色
-        int streak = 0;           // 候選色連續幀數
-        int hold   = 0;           // 已確認後的保留幀數
+        int[] votes = new int[4]; // 靽萘
+        int stable = 0;           //  𤌍  滨帘摰朞𠧧 (0/1/2/3)
+        int cand   = 0;           //  訜  滚 䠷 貉𠧧
+        int streak = 0;           //  䠷 貉𠧧      彍
+        int hold   = 0;           // 撌脩Ⅱ隤滚 𣬚 靽萘 坔  彍
     }
     private final List<TLTrack> tlTracks = new ArrayList<>();
     private ExecutorService cameraExecutor;
     private Handler ui;
-    private static final boolean TL_DEBUG_LOG   = true;   // 想看細節就 true
+    private static final boolean TL_DEBUG_LOG   = true;   //  喟 讠敦蝭 撠  true
     private static final Scalar LOWER_RED1 = new Scalar(0, 70, 50);
     private static final Scalar UPPER_RED1 = new Scalar(10, 255, 255);
     private static final Scalar LOWER_RED2 = new Scalar(160, 70, 50);
@@ -188,44 +186,44 @@ public class MainActivity extends AppCompatActivity {
 
     private float currentScale = 1f;
     public float getCurrentScale() { return currentScale; }
-    // 影像座標還原需要用到
+    // 敶勗 誩漣璅䠷    罸 閬  鍂
     private float currentDx = 0f, currentDy = 0f;
     private int lastImageHeightPx = 0;
 
-    // 手機鏡頭離地高度（公尺）— 可微調或做成設定
+    //   𧢲 罸𨘥   𣪧 𧑐擃睃漲嚗  砍偕嚗争    虾敺株矽  硋 𡁏 鞱身摰
     public static final float H_CAMERA = 1.40f;
     public float getCurrentDx() { return currentDx; }
     public float getCurrentDy() { return currentDy; }
     public int getLastImageHeightPx() { return lastImageHeightPx; }
     private static final String ALERT_CHANNEL_ID = "alert_channel_sound_novib";
-    private static final String ALERT_CHANNEL_NAME = "行人/紅綠燈提醒";
-    private BluetoothGattCharacteristic vibChar = null;         // 震動用特徵值快取
+    private static final String ALERT_CHANNEL_NAME = "銵䔶犖/蝝 蝬删   鞾  ";
+    private BluetoothGattCharacteristic vibChar = null;         //     閧鍂 鸌敺萄 澆翰
     private final java.util.concurrent.atomic.AtomicBoolean analyzing = new java.util.concurrent.atomic.AtomicBoolean(false);
     private long lastAnalyzeMs = 0;
-    private static final long MIN_INTERVAL_MS = 66; // ~15 FPS，可依機型調整
-    // ===== OSM Overpass (速限查詢 API) =====
+    private static final long MIN_INTERVAL_MS = 66; // ~15 FPS嚗 虾靘脲 笔 贝矽 㟲
+    // ===== OSM Overpass ( 罸 鞉䰻閰  API) =====
     private static final String OVERPASS_BASE_URL = "https://overpass-api.de/";
     private OverpassApi overpassApi;
 
-    // 節流（避免 Overpass 被你打爆）
-    private static final float OSM_QUERY_MIN_MOVE_M = 120f;        // 位移 > 120m 才查
-    private static final long  OSM_QUERY_MIN_INTERVAL_MS = 20_000; // 或每 20 秒一次
+    // 蝭 瘚 嚗  踹   Overpass 鋡思 䭾 梶 嚗
+    private static final float OSM_QUERY_MIN_MOVE_M = 120f;        // 雿滨宏 > 120m   齿䰻
+    private static final long  OSM_QUERY_MIN_INTERVAL_MS = 20_000; //   𡝗   20 蝘雴 甈
     private static final int DEFAULT_OSM_SPEED_KMH = 50;
 
     private float lastQueryLat = Float.NaN, lastQueryLng = Float.NaN;
     private long lastQueryMs = 0L;
 
-    // 目前取得到的速限（km/h），null = 未知
+    //  𤌍  滚 硋 堒    罸 琜 ɑm/h嚗㚁 矝ull =  𧊋 䰻
     private Integer currentSpeedLimitKmh = DEFAULT_OSM_SPEED_KMH;
 
-    // === 超速提醒控制參數 ===
-    private static final float OVERSPEED_TOLERANCE = 1.01f; // 容忍比例，避免 GPS 抖動
-    private static final long NOTIF_COOLDOWN_MS = 10_000;   // 通知冷卻 10 秒
-    private static final long OVERSPEED_HOLD_MS = 0_000;    // 持續時間判定 (0 表示立即)
+    // === 頞    鞾 埝綉     彍 ===
+    private static final float OVERSPEED_TOLERANCE = 1.01f; // 摰孵 齿 𥪯 页 屸 踹   GPS   硋
+    private static final long NOTIF_COOLDOWN_MS = 10_000;   //  𡁶䰻 瑕㭱 10 蝘
+    private static final long OVERSPEED_HOLD_MS = 0_000;    //   蝥峕   枏ế摰  (0 銵函內蝡见朖)
     private long lastNotifMs = 0L;
     private long overspeedSinceMs = 0L;
 
-    // 最近一次定位
+    //   餈睲 甈∪ 帋
     private Location lastLocation;
 
     @Override
@@ -293,13 +291,13 @@ public class MainActivity extends AppCompatActivity {
 
         textToSpeech = new TextToSpeech(this, status -> {
             if (status == TextToSpeech.SUCCESS) {
-                textToSpeech.setLanguage(java.util.Locale.TAIWAN); // 使用中文語音
+                textToSpeech.setLanguage(java.util.Locale.TAIWAN); // 雿輻鍂銝剜   鮋𨺗
             }
         });
-        //初始化藍牙並請求權限
+        //  嘥 见 𤥁 滨 嗘蒂隢𧢲 甈𢠃
         BluetoothManager bluetoothManager = (BluetoothManager) getSystemService(Context.BLUETOOTH_SERVICE);
         bluetoothAdapter = bluetoothManager.getAdapter();
-        //requestBluetoothPermissions(); // 呼叫藍牙權限請
+        //requestBluetoothPermissions(); //  鐤 㙈  滨 蹱 𢠃 鞱
         findViewById(R.id.btnSettings).setOnClickListener(v -> showSettingsDialog());
 
     }
@@ -335,17 +333,17 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    //從已配對裝置連線
+    //敺𧼮歇 滚 滩 萘蔭
     @SuppressLint("MissingPermission")
     private void tryConnectFromBonded() {
         if (!hasBtConnect()) { requestBtPermsIfNeeded(); return; }
         if (bluetoothAdapter == null) return;
 
-        for (BluetoothDevice d : bluetoothAdapter.getBondedDevices()) { // 需要 CONNECT
-            String name = d.getName();                                  // 需要 CONNECT
+        for (BluetoothDevice d : bluetoothAdapter.getBondedDevices()) { //   閬  CONNECT
+            String name = d.getName();                                  //   閬  CONNECT
             if (name != null && (name.contains("Mi") || name.contains("Band") || name.contains("Xiaomi")
                     || (targetDeviceName != null && name.contains(targetDeviceName)))) {
-                Log.d("MiBand", "從已配對裝置直接連: " + name + " / " + d.getAddress());
+                Log.d("MiBand", "敺𧼮歇 滚 滩 萘蔭 凒 𦻖  : " + name + " / " + d.getAddress());
 
                 return;
             }
@@ -355,14 +353,14 @@ public class MainActivity extends AppCompatActivity {
     @SuppressLint("MissingPermission")
     private void triggerMiBandVibration() {
         if (!hasBtConnect()) { requestBtPermsIfNeeded(); return; }
-        if (bluetoothGatt == null || vibChar == null) { Log.w("MiBand","gatt/char 為 null"); return; }
+        if (bluetoothGatt == null || vibChar == null) { Log.w("MiBand","gatt/char    null"); return; }
         vibChar.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
         vibChar.setValue(new byte[]{0x02});
         try {
             boolean ok = bluetoothGatt.writeCharacteristic(vibChar);
             Log.d("MiBand","write vibrate -> " + ok);
         } catch (SecurityException se) {
-            Log.e("MiBand","writeCharacteristic 被拒", se);
+            Log.e("MiBand","writeCharacteristic 鋡急  ", se);
         }
     }
 
@@ -370,24 +368,24 @@ public class MainActivity extends AppCompatActivity {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationManager nm = getSystemService(NotificationManager.class);
 
-            // 先刪同名（理論上新 ID 不會撞，但保險）
+            //   ⏛    㵪   隢碶 𦠜鰵 ID 銝齿   痹 䔶 靽嗪麬嚗
             NotificationChannel existing = nm.getNotificationChannel(ALERT_CHANNEL_ID);
             if (existing != null) nm.deleteNotificationChannel(ALERT_CHANNEL_ID);
 
             NotificationChannel ch = new NotificationChannel(
                     ALERT_CHANNEL_ID,
                     ALERT_CHANNEL_NAME,
-                    NotificationManager.IMPORTANCE_DEFAULT   // 有聲、不彈頭貼
+                    NotificationManager.IMPORTANCE_DEFAULT   //   㕑 脯  銝滚   鞎
             );
-            ch.setDescription("有聲、不震（手機），手環由 Mi Fitness 鏡像震動");
-            ch.enableVibration(false);                 // 關震動
-            ch.setVibrationPattern(new long[]{0});     // 明確不震
+            ch.setDescription("  㕑 脯  銝漤     𧢲   㚁 峕 讠兛 眏 Mi Fitness  𨘥 誯    ");
+            ch.enableVibration(false);                 //   𣈯
+            ch.setVibrationPattern(new long[]{0});     //   𡒊Ⅱ銝漤
             Uri sound = Settings.System.DEFAULT_NOTIFICATION_URI;
             AudioAttributes attrs = new AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_NOTIFICATION)
                     .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                     .build();
-            ch.setSound(sound, attrs);                 // 開聲音
+            ch.setSound(sound, attrs);                 //   贝 脤𨺗
             nm.createNotificationChannel(ch);
 
             NotificationChannel v = nm.getNotificationChannel(ALERT_CHANNEL_ID);
@@ -406,56 +404,56 @@ public class MainActivity extends AppCompatActivity {
                 try {
                     ProcessCameraProvider cameraProvider = cameraProviderFuture.get();
 
-                    // 1. Preview 設定
+                    // 1. Preview 閮剖
                     Preview preview = new Preview.Builder().build();
                     previewView.setImplementationMode(PreviewView.ImplementationMode.PERFORMANCE);
                     previewView.setScaleType(PreviewView.ScaleType.FIT_CENTER);
 
-                    // 安全取得旋轉
+                    // 摰匧 典 硋 埈 贝
                     Display display = previewView.getDisplay();
                     int rotation = (display != null) ? display.getRotation() : Surface.ROTATION_0;
                     preview.setTargetRotation(rotation);
                     preview.setSurfaceProvider(previewView.getSurfaceProvider());
 
-                    // 2. 選擇後鏡頭
+                    // 2.  豢   屸𨘥
                     CameraSelector cameraSelector = new CameraSelector.Builder()
                             .requireLensFacing(CameraSelector.LENS_FACING_BACK)
                             .build();
 
-                    // 3. ImageAnalysis 設定
+                    // 3. ImageAnalysis 閮剖
                     ImageAnalysis analysis = new ImageAnalysis.Builder()
                             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                            .setTargetResolution(new android.util.Size(1920, 1080)) // 需要再快可改 1280x720
-                            .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888) // ✅ 改 RGBA
+                            .setTargetResolution(new android.util.Size(1920, 1080)) //   閬  滚翰 虾 㺿 1280x720
+                            .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888) //     㺿 RGBA
                             .setImageQueueDepth(1)
                             .build();
                     analysis.setTargetRotation(rotation);
 
-                    // ★ 讓 Preview & Analysis 共用同一個 ViewPort（裁切/比例一致）
+                    //    霈  Preview & Analysis  梁鍂  䔶    ViewPort嚗     /瘥𥪯 衤  稲嚗
                     androidx.camera.core.ViewPort vp =
                             new androidx.camera.core.ViewPort.Builder(
                                     new android.util.Rational(previewView.getWidth(), previewView.getHeight()),
-                                    rotation // 用你前面已算好的 rotation
+                                    rotation //  鍂雿惩 漤𢒰撌脩 堒末   rotation
                             )
-                                    .setScaleType(androidx.camera.core.ViewPort.FIT) // 對齊 PreviewView 的 FIT_CENTER 顯示
+                                    .setScaleType(androidx.camera.core.ViewPort.FIT) // 撠漤   PreviewView    FIT_CENTER 憿舐內
                                     .build();
 
                     androidx.camera.core.UseCaseGroup ucg =
                             new androidx.camera.core.UseCaseGroup.Builder()
-                                    .addUseCase(preview)   // 用你前面已建立的 preview
-                                    .addUseCase(analysis)  // 用你前面已建立的 analysis
+                                    .addUseCase(preview)   //  鍂雿惩 漤𢒰撌脣遣蝡讠  preview
+                                    .addUseCase(analysis)  //  鍂雿惩 漤𢒰撌脣遣蝡讠  analysis
                                     .setViewPort(vp)
                                     .build();
 
                     cameraProvider.unbindAll();
                     camera = cameraProvider.bindToLifecycle(this, cameraSelector, ucg);
 
-                    // 4. 設定 Analyzer（建議用主執行緒，如要用 cameraExecutor 也可）
+                    // 4. 閮剖   Analyzer嚗 遣霅啁鍂銝餃嘑銵𣬚 𡜐   閬  鍂 cameraExecutor 銋笔虾嚗
                     analysis.setAnalyzer(cameraExecutor, image -> {
                         if (!analyzing.compareAndSet(false, true)) { image.close(); return; }
 
                         long now = android.os.SystemClock.uptimeMillis();
-                        if (now - lastAnalyzeMs < MIN_INTERVAL_MS) { // ~15fps，可自行調整
+                        if (now - lastAnalyzeMs < MIN_INTERVAL_MS) { // ~15fps嚗 虾 䌊銵諹矽 㟲
                             image.close();
                             analyzing.set(false);
                             return;
@@ -465,7 +463,7 @@ public class MainActivity extends AppCompatActivity {
                         try {
                             frameIndex++;
 
-                            // ✅ 走快速路徑（因為上面把輸出改成 RGBA）
+                            //    韏啣翰 蠘楝敺𡢅   删 箔 𢠃𢒰  𡃏撓 枂 㺿    RGBA嚗
                             Bitmap bitmap = imageToBitmapFast(image);
                             currentBitmap = bitmap;
                             lastImageHeightPx = bitmap.getHeight();
@@ -475,21 +473,21 @@ public class MainActivity extends AppCompatActivity {
                                 fPxY = (focalMm / sensorHeightMm) * bitmap.getHeight();
                             }
 
-                            // ✓ 自適應平鋪：每隔一幀才做 2×2，另一幀跑全圖，降低 GC
-                            boolean useTiles = false; // 偶數幀做平鋪
-                            if ((frameIndex & 1) == 0 && lastTLHeightPx > 0 && lastTLHeightPx < 20) { // 門檻可調
+                            //      䌊 拇 匧像 𪊽嚗𡁏 誯 𥪯 撟   滚   2  2嚗 𡖂銝 撟 頝穃 典 吔 屸 滢   GC
+                            boolean useTiles = false; //  嗆彍撟  𡁜像 𪊽
+                            if ((frameIndex & 1) == 0 && lastTLHeightPx > 0 && lastTLHeightPx < 20) { //   瑼餃虾隤
                                 useTiles = true;
                             }
                             List<DetectorMain.Recognition> detAll = useTiles
                                     ? detectTiled(bitmap, TILE_COLS, TILE_ROWS, TILE_OVERLAP)
                                     : detector.detect(bitmap, bitmap.getWidth(), bitmap.getHeight());
 
-                            // 交通號誌的門檻先過濾，降低後面 OpenCV 的負擔
+                            // 鈭日 朞 蠘 𣬚   瑼餃   擧蕪嚗屸 滢 𤾸 屸𢒰 OpenCV   鞎䭾
                             List<DetectorMain.Recognition> filtered = new ArrayList<>();
                             for (DetectorMain.Recognition r : detAll) {
                                 if ("traffic_light".equals(r.getTitle())) {
                                     if (r.getConfidence() >= TL_CONF &&
-                                            Math.min(r.getLocation().width(), r.getLocation().height()) >= MIN_BOX_PX) { // 稍微放大最小框
+                                            Math.min(r.getLocation().width(), r.getLocation().height()) >= MIN_BOX_PX) { // 蝔滚凝 𦆮憭扳 撠𤩺
                                         filtered.add(r);
                                     }
                                 } else {
@@ -499,45 +497,55 @@ public class MainActivity extends AppCompatActivity {
 
                             List<DetectorMain.Recognition> kept = nmsByClass(filtered, IOU_NMS);
 
-                            // ===== 判斷燈號顏色（降頻 + 只對最大幾個做） =====
+                            // =====  ế 𪃾    罸 讛𠧧嚗  漤朌 +  蘨撠齿 憭批嗾 见 𡄯   =====
                             float maxTlH = -1f;
 
-                            // 先收集所有紅綠燈
+                            //   𤣰      厩 蝬删
                             List<DetectorMain.Recognition> tls = new ArrayList<>();
                             for (DetectorMain.Recognition r : kept) {
                                 if ("traffic_light".equals(r.getTitle())) {
                                     tls.add(r);
-                                    // 順便記錄最大高度，供後面自適應用
+                                    //   靘輯 㗛   憭折 睃漲嚗䔶 𥕦 屸𢒰 䌊 拇 厩鍂
                                     if (r.getLocation().height() > maxTlH) maxTlH = r.getLocation().height();
                                 }
                             }
                             if (maxTlH > 0) lastTLHeightPx = maxTlH;
 
-                            // 依 bbox 高度由大到小排序（大的通常比較近、比較清楚）
+                            // 靘  bbox 擃睃漲 眏憭批 撠𤩺 鍦 𧶏  之   𡁜虜瘥磰 餈㻫  瘥磰 皜 璆𡄯
                             tls.sort((a, b) -> Float.compare(b.getLocation().height(), a.getLocation().height()));
 
-                            // 只挑最大的 1～2 個做判色（避免每幀大量 OpenCV 計算）
+                            //  蘨  烐 憭抒  1嚚 2  见 𡁜ế 𠧧嚗  踹 齿 誩 憭折   OpenCV 閮  梹
                             int maxColorCheck = Math.min(2, tls.size());
 
-                            // 每 3 幀才做一次判色（降頻，降低延遲）
-                            boolean doColorThisFrame = (frameIndex % 3 == 0);
+                            // 瘥  3 撟   滚 帋 甈∪ế 𠧧嚗  漤朌嚗屸 滢 𤾸辣 莎
+                            // 每幀都偵測顏色，透過追蹤機制穩定化
+                            boolean doColorThisFrame = true;
 
                             if (doColorThisFrame) {
                                 for (int i = 0; i < maxColorCheck; i++) {
                                     DetectorMain.Recognition r = tls.get(i);
-                                    String c = detectTrafficLightColor(bitmap, r.getLocation());
-                                    r.setColor(c);
-                                    // 可選：Log 診斷
-                                    // Log.d("DEBUG_TL", "TrafficLight color = " + c + " bbox=" + r.getLocation());
+                                    // 先偵測原始顏色
+                                    String rawColor = detectTrafficLightColor(bitmap, r.getLocation());
+                                    // 🔧 關鍵修改：透過追蹤機制穩定化顏色
+                                    String stabilizedColor = voteColorOverFrames(r.getLocation(), rawColor);
+                                    // 設定穩定後的顏色
+                                    r.setColor(stabilizedColor);
+
+                                    // 可以打開 log 觀察效果
+                                    if (TL_DEBUG_LOG) {
+                                        Log.d("DEBUG_TL", String.format("TL #%d: raw=%s → stable=%s bbox=%s",
+                                                i, rawColor, stabilizedColor, r.getLocation()));
+                                    }
                                 }
                             }
-                            // 其餘較小的燈，本幀先不判；顏色會在之後幀慢慢補上
 
-                            // 映射到 Overlay 座標（保留你原本距離/顯示邏輯）
+                            //  園 䁅 撠讐     峕𧋦撟    滚ế嚗偦 讛𠧧   銁銋见    Ｘ Ｚ 靝
+
+                            //   惩    Overlay 摨扳 辷   萘 嗘 惩  𧋦頝嗪𣪧/憿舐內 讛摩嚗
                             int imgW = bitmap.getWidth(), imgH = bitmap.getHeight();
                             List<DetectorMain.Recognition> viewResults = toOverlayResults(kept, imgW, imgH);
 
-                            // UI 更新丟回主執行緒
+                            // UI  凒 鰵銝笔 硺蜓 嘑銵𣬚
                             runOnUiThread(() -> {
                                 overlayView.setResults(viewResults);
                                 processPedestrianLogic(viewResults);
@@ -574,7 +582,7 @@ public class MainActivity extends AppCompatActivity {
             }, ContextCompat.getMainExecutor(this));
         });
     }
-    // 若你沒有這個欄位，順便加上
+    //  𥅾雿䭾 埝 厰 坔 𧢲 雿㵪 屸 靘踹 牐
     private final java.util.concurrent.atomic.AtomicReference<Bitmap> reusableBmp =
             new java.util.concurrent.atomic.AtomicReference<>();
 
@@ -591,7 +599,7 @@ public class MainActivity extends AppCompatActivity {
         buf.rewind();
         bmp.copyPixelsFromBuffer(buf);
 
-        // ✅ 要把像素旋轉到正向（對齊 PreviewView）
+        //    閬   𠰴 讐 䭾 贝 匧 甇  𡢅   漤   PreviewView嚗
         int rotation = image.getImageInfo().getRotationDegrees();
         if (rotation != 0) {
             Matrix m = new Matrix();
@@ -602,10 +610,10 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private Bitmap imageToBitmap(ImageProxy image) {
-        // 1. 先拿到旋轉角度
+        // 1.   嚉    贝 㕑 鍦漲
         int rotation = image.getImageInfo().getRotationDegrees();
 
-        // 2. NV21 -> JPEG -> 原始 Bitmap（raw）
+        // 2. NV21 -> JPEG ->   笔   Bitmap嚗ǐaw嚗
         ImageProxy.PlaneProxy[] planes = image.getPlanes();
         ByteBuffer yBuffer = planes[0].getBuffer();
         ByteBuffer uBuffer = planes[1].getBuffer();
@@ -640,13 +648,13 @@ public class MainActivity extends AppCompatActivity {
         byte[] jpeg = out.toByteArray();
         Bitmap raw = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length);
 
-        // 3. 用 Matrix 把 raw 旋轉到正確方向
+        // 3.  鍂 Matrix     raw   贝 匧 甇 Ⅱ 䲮
         Matrix m = new Matrix();
         m.postRotate(rotation);
         Bitmap rotated = Bitmap.createBitmap(
                 raw, 0, 0, raw.getWidth(), raw.getHeight(), m, true);
 
-        // 4. 回傳糾正後的 Bitmap
+        // 4.   𧼮 喟鳥甇  𣬚  Bitmap
         return rotated;
     }
 
@@ -657,18 +665,18 @@ public class MainActivity extends AppCompatActivity {
         float viewW = overlayView.getWidth();
         float viewH = overlayView.getHeight();
 
-        // 與 PreviewView.FIT_CENTER 對應的 letterbox 縮放
+        //     PreviewView.FIT_CENTER 撠齿 厩  letterbox 蝮格𦆮
         float scale = Math.min(viewW / imgW, viewH / imgH);
         float dx = (viewW - imgW * scale) / 2f;
         float dy = (viewH - imgH * scale) / 2f;
 
-        // 若 previewView 與 overlayView 在父容器位置不同，補上相對位移
+        //  𥅾 previewView     overlayView  銁  摰孵膥雿滨蔭銝滚 䕘 諹 靝 羓㮾撠滢 滨宏
         previewView.getLocationInWindow(pvLoc);
         overlayView.getLocationInWindow(ovLoc);
         dx += (pvLoc[0] - ovLoc[0]);
         dy += (pvLoc[1] - ovLoc[1]);
 
-        // 保留你既有的距離/顯示邏輯會用到的比例與偏移
+        // 靽萘 嗘 䭾𠳿  厩 頝嗪𣪧/憿舐內 讛摩   鍂    瘥𥪯 贝   讐宏
         currentScale = scale;
         currentDx = dx;
         currentDy = dy;
@@ -694,13 +702,13 @@ public class MainActivity extends AppCompatActivity {
     private void startLocationUpdates() {
         locationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
         try {
-            // 用主執行緒 Looper
+            //  鍂銝餃嘑銵𣬚   Looper
             locationManager.requestLocationUpdates(
                     LocationManager.GPS_PROVIDER, 1000, 0, locationListener, Looper.getMainLooper());
             locationManager.requestLocationUpdates(
                     LocationManager.NETWORK_PROVIDER, 2000, 0, locationListener, Looper.getMainLooper());
 
-            // 立刻用上一次位置觸發一次（就算沒移動也能打 API）
+            // 蝡见  鍂銝𠹺 甈∩ 滨蔭閫貊䔄銝 甈∴  停蝞埈 垍宏  蓥 蠘 賣   API嚗
             Location last = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER);
             if (last == null) last = locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
             if (last != null) {
@@ -817,7 +825,7 @@ public class MainActivity extends AppCompatActivity {
 
                             @Override
                             public void onFailure(Call<Void> call, Throwable t) {
-                                Toast.makeText(MainActivity.this, "連線失敗!", Toast.LENGTH_SHORT).show();
+                                Toast.makeText(MainActivity.this, "   𡁜仃   !", Toast.LENGTH_SHORT).show();
                             }
                         });
                     }
@@ -825,7 +833,7 @@ public class MainActivity extends AppCompatActivity {
 
                 @Override
                 public void onFailure(Call<Void> call, Throwable t) {
-                    Toast.makeText(MainActivity.this, "連線失敗!", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(MainActivity.this, "   𡁜仃   !", Toast.LENGTH_SHORT).show();
                 }
             });
         });
@@ -834,7 +842,7 @@ public class MainActivity extends AppCompatActivity {
             SharedPreferences loginPrefs = getSharedPreferences("user_prefs", MODE_PRIVATE);
             loginPrefs.edit().remove("user_id").apply();
 
-            Toast.makeText(MainActivity.this, "已登出", Toast.LENGTH_SHORT).show();
+            Toast.makeText(MainActivity.this, "撌脩蒈 枂", Toast.LENGTH_SHORT).show();
 
             dialog.dismiss();
             Intent intent = new Intent(MainActivity.this, SignIn.class);
@@ -861,7 +869,7 @@ public class MainActivity extends AppCompatActivity {
             }
         }
         if (requestCode == REQUEST_BLUETOOTH_PERMISSIONS) {
-            Log.d("MiBand", "收到藍牙權限結果");
+            Log.d("MiBand", " 𤣰    滨 蹱 𢠃 鞟 鞉  ");
             boolean granted = true;
             for (int result : grantResults) {
                 if (result != PackageManager.PERMISSION_GRANTED) {
@@ -870,11 +878,11 @@ public class MainActivity extends AppCompatActivity {
                 }
             }
             if (granted) {
-                Log.d("MiBand", "藍牙權限已授權，開始掃描");
+                Log.d("MiBand", "  滨 蹱 𢠃 𣂼歇    𠺪 屸 见 𧢲    ");
                 ensureMiBandConnected();
                 //scanAndConnectMiBand();
             } else {
-                Toast.makeText(this, "未授權藍牙權限，無法連線手環", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, " 𧊋    𡃏 滨 蹱 𢠃 琜 𣬚 ⊥ 閖   𡁏 讠兛", Toast.LENGTH_SHORT).show();
             }
         }
     }
@@ -886,20 +894,20 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void ensureMiBandConnected() {
-        if (bluetoothGatt != null) return; // 已有連線物件就不重來
+        if (bluetoothGatt != null) return; // 撌脫 厰   𡁶 隞嗅停銝漤 滢
 
-        // 藍牙要開
+        //   滨 躰
         if (bluetoothAdapter == null || !bluetoothAdapter.isEnabled()) {
-            Log.w("MiBand", "藍牙未開啟，請先開啟藍牙");
+            Log.w("MiBand", "  滨 蹱𧊋  见   諹 见   见 蠘 滨  ");
             try { startActivity(new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)); } catch (Exception ignore) {}
             return;
         }
-        // 某些機型掃描需要開定位
+        //   𣂷 𥟇 笔 𧢲   誯 閬   见 帋
         if (!isLocationEnabled()) {
-            Log.w("MiBand", "系統定位未開啟，可能導致掃描為空");
+            Log.w("MiBand", "蝟餌絞摰帋 齿𧊋  见    虾 賢 舘稲    讐 箇征");
             try { startActivity(new Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS)); } catch (Exception ignore) {}
         }
-        // 權限（Android 12+）
+        // 甈𢠃 琜 ㇁ndroid 12+嚗
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED
                     || ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
@@ -910,13 +918,13 @@ public class MainActivity extends AppCompatActivity {
                 return;
             }
         }
-        tryConnectFromBonded(); // 先從已配對直連，沒有再掃描
+        tryConnectFromBonded(); //    𧼮歇 滚 滨凒   峕 埝 匧 齿
     }
 
     private void sendAlertNotification(String title, String content) {
         //if (!isVibrationEnabled) return;
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, ALERT_CHANNEL_ID)
-                .setSmallIcon(R.drawable.ic_launcher_foreground) // 替換成你自己的 icon
+                .setSmallIcon(R.drawable.ic_launcher_foreground) //  𤜯  𥟇 𣂷 㰘䌊撌梁  icon
                 .setContentTitle(title)
                 .setContentText(content)
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
@@ -924,12 +932,12 @@ public class MainActivity extends AppCompatActivity {
 
         NotificationManagerCompat notificationManager = NotificationManagerCompat.from(this);
 
-        // 檢查權限
+        // 瑼Ｘ䰻甈𢠃
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
                 == PackageManager.PERMISSION_GRANTED) {
             notificationManager.notify((int) System.currentTimeMillis(), builder.build());
         } else {
-            Log.w("通知權限", "尚未取得通知權限，無法顯示通知");
+            Log.w(" 𡁶䰻甈𢠃  ", "撠𡁏𧊋  硋 烾 𡁶䰻甈𢠃 琜 𣬚 ⊥ 閖＊蝷粹 𡁶䰻");
         }
     }
 
@@ -962,9 +970,9 @@ public class MainActivity extends AppCompatActivity {
             }
 
             if (title.contains("traffic")) {
-                // 直接讀取剛剛在 analyzer 存好的顏色
+                //  凒 𦻖霈   硋 𥕦 𥕦銁 analyzer 摮睃末  憿讛𠧧
                 String color = r.getColor();
-                Log.d("DEBUG_TL", "TrafficLight color (預先偵測) = " + color);
+                Log.d("DEBUG_TL", "TrafficLight color (  𣂼   菜葫) = " + color);
                 trafficLightColor = color;
             }
 
@@ -975,20 +983,20 @@ public class MainActivity extends AppCompatActivity {
         switch (sensitivityLevel) {
             case 3:
                 if (personDistance <= 20f) {
-                    speakOnce("前方有行人，請注意");
-                    sendAlertNotification("行人靠近", "前方有行人，請小心慢行");
+                    speakOnce("  齿䲮  㕑 䔶犖嚗諹 𧢲釣  ");
+                    sendAlertNotification("銵䔶犖  㰘  ", "  齿䲮  㕑 䔶犖嚗諹 见 誩  Ｚ  ");
                 }
                 break;
             case 2:
                 if (hasCrosswalk && personDistance <= 15f) {
-                    speakOnce("行人準備過馬路，請減速");
-                    sendAlertNotification("行人靠近", "前方有行人，請小心慢行");
+                    speakOnce("銵䔶犖皞硋 䠷 𡡞收頝荔 諹 𧢲 偦  ");
+                    sendAlertNotification("銵䔶犖  㰘  ", "  齿䲮  㕑 䔶犖嚗諹 见 誩  Ｚ  ");
                 }
                 break;
             case 1:
                 if (hasCrosswalk && personDistance <= 10f && "green".equals(trafficLightColor)) {
-                    speakOnce("綠燈期間有行人過馬路，請讓行");
-                    sendAlertNotification("行人靠近", "前方有行人，請小心慢行");
+                    speakOnce("蝬删   罸 𤘪 㕑 䔶犖 𡡞收頝荔 諹 贝 栞  ");
+                    sendAlertNotification("銵䔶犖  㰘  ", "  齿䲮  㕑 䔶犖嚗諹 见 誩  Ｚ  ");
                 }
                 break;
         }
@@ -1015,8 +1023,8 @@ public class MainActivity extends AppCompatActivity {
 
         if (textToSpeech != null && !textToSpeech.isSpeaking()) {
             textToSpeech.speak(message, TextToSpeech.QUEUE_FLUSH, null, "tts1");
-            lastSpeechTime = now; // 更新語音冷卻時間
-            Log.d("提醒", "播放語音：" + message);
+            lastSpeechTime = now; //  凒 鰵隤鮋𨺗 瑕㭱
+            Log.d("  鞾  ", " 偘 𦆮隤鮋𨺗嚗 " + message);
         }
     }
 
@@ -1026,7 +1034,7 @@ public class MainActivity extends AppCompatActivity {
         Mat redMask = new Mat(), tmpRed = new Mat(), yellowMask = new Mat(), greenMask = new Mat();
 
         try {
-            // 1) ROI 稍微內縮，避免邊緣
+            // 1) ROI 蝔滚凝 抒葬嚗屸 踹 漤 羓楠
             RectF box = new RectF(rawBox);
             float insetX = box.width()  * TL_ROI_INSET;
             float insetY = box.height() * TL_ROI_INSET;
@@ -1042,31 +1050,31 @@ public class MainActivity extends AppCompatActivity {
             Bitmap cropSmall = Bitmap.createScaledBitmap(crop, 96, 96, true);
             crop.recycle();
 
-            // 2) 轉 HSV
+            // 2) 頧  HSV
             Utils.bitmapToMat(cropSmall, mat);
             cropSmall.recycle();
             Imgproc.cvtColor(mat, mat, Imgproc.COLOR_RGBA2BGR);
             Imgproc.cvtColor(mat, mat, Imgproc.COLOR_BGR2HSV);
 
-            // 3) 拆 H/S/V
+            // 3)    H/S/V
             Core.split(mat, hsv);
             Mat hueChan   = hsv.get(0);
             Mat satChan   = hsv.get(1);
             Mat valueChan = hsv.get(2);
 
-            // 4) 用 Otsu 找亮區 + 降低飽和度門檻
+            // 4)  鍂 Otsu  𪄳鈭桀  +   滢 𡡞ˊ   漲  瑼
             Imgproc.threshold(valueChan, mask, 0, 255, Imgproc.THRESH_BINARY + Imgproc.THRESH_OTSU);
             Mat satMask = new Mat();
-            Imgproc.threshold(satChan, satMask, 60, 255, Imgproc.THRESH_BINARY); // 60 比 100 寬鬆
+            Imgproc.threshold(satChan, satMask, 60, 255, Imgproc.THRESH_BINARY); // 60 瘥  100 撖祇
             Core.bitwise_and(mask, satMask, mask);
             satMask.release();
 
-            // 5) 輕度開閉去噪
+            // 5) 頛訫漲  钅 匧縧 臁
             kernel = Imgproc.getStructuringElement(Imgproc.MORPH_ELLIPSE, new Size(3, 3));
             Imgproc.morphologyEx(mask, mask, Imgproc.MORPH_OPEN,  kernel);
             Imgproc.morphologyEx(mask, mask, Imgproc.MORPH_CLOSE, kernel);
 
-            // 6) 取最大亮區
+            // 6)   𡝗 憭找漁
             List<MatOfPoint> contours = new ArrayList<>();
             Imgproc.findContours(mask.clone(), contours, new Mat(), Imgproc.RETR_EXTERNAL, Imgproc.CHAIN_APPROX_SIMPLE);
             maskLight = Mat.zeros(mask.size(), mask.type());
@@ -1081,19 +1089,19 @@ public class MainActivity extends AppCompatActivity {
                 maskLight = mask.clone();
             }
 
-            // 7) 三色掩膜（在 HSV 空間）
+            // 7) 銝㕑𠧧 焵 頣  銁 HSV 蝛粹 橒
             Core.inRange(mat, LOWER_RED1, UPPER_RED1, redMask);
             Core.inRange(mat, LOWER_RED2, UPPER_RED2, tmpRed);
             Core.add(redMask, tmpRed, redMask);
             Core.inRange(mat, LOWER_YELLOW, UPPER_YELLOW, yellowMask);
             Core.inRange(mat, LOWER_GREEN, UPPER_GREEN,   greenMask);
 
-            // 與最亮區相交
+            //     鈭桀  㮾鈭
             Core.bitwise_and(redMask,    maskLight, redMask);
             Core.bitwise_and(yellowMask, maskLight, yellowMask);
             Core.bitwise_and(greenMask,  maskLight, greenMask);
 
-            // 8) 嚴格判色（主要路徑）
+            // 8)  𠂔 聢 ế 𠧧嚗 蜓閬 頝臬 𡢅
             int cntR  = Core.countNonZero(redMask);
             int cntY  = Core.countNonZero(yellowMask);
             int cntG  = Core.countNonZero(greenMask);
@@ -1122,7 +1130,7 @@ public class MainActivity extends AppCompatActivity {
                 return "green";
             }
 
-            // 9) 鬆綁 fallback（亮區太少或比例不明顯時）
+            // 9) 擛 蝬  fallback嚗 漁  憭芸 烐 𡝗 𥪯 衤 齿 𡡞＊  嚗
             Mat looseMask = new Mat();
             Mat valMask2 = new Mat(), satMask2 = new Mat();
             Imgproc.threshold(valueChan, valMask2, 60, 255, Imgproc.THRESH_BINARY); // V>=60
@@ -1165,7 +1173,7 @@ public class MainActivity extends AppCompatActivity {
                 }
             }
 
-            // 10) 最終兜底：Hue 平均（避免全是 unknown）
+            // 10)   蝯  𨅯 𤏪 䥅ue 撟喳     踹 滚 冽糓 unknown嚗
             Scalar mHue = Core.mean(hueChan, maskLight);
             Scalar mSat = Core.mean(satChan, maskLight);
             double hue = mHue.val[0], sat = mSat.val[0];
@@ -1220,7 +1228,7 @@ public class MainActivity extends AppCompatActivity {
 
     private List<DetectorMain.Recognition> nonMaxSuppression(
             List<DetectorMain.Recognition> tlList, float iouThreshold) {
-        // 按 confidence 由大到小排序
+        //     confidence  眏憭批 撠𤩺 鍦
         tlList.sort((a, b) -> Float.compare(b.getConfidence(), a.getConfidence()));
         List<DetectorMain.Recognition> kept = new ArrayList<>();
         boolean[] removed = new boolean[tlList.size()];
@@ -1245,8 +1253,8 @@ public class MainActivity extends AppCompatActivity {
                                             PreviewView.ScaleType scaleType) {
         Matrix m = new Matrix();
 
-        // FIT_CENTER = letterbox：以較小比例縮放（不裁切）
-        // FILL_CENTER = centerCrop：以較大比例縮放（會裁切）
+        // FIT_CENTER = letterbox嚗帋誑頛 撠𤩺 𥪯 讠葬 𦆮嚗  滩
+        // FILL_CENTER = centerCrop嚗帋誑頛 憭扳 𥪯 讠葬 𦆮嚗  鋆
         boolean isFit = (scaleType == PreviewView.ScaleType.FIT_CENTER
                 || scaleType == PreviewView.ScaleType.FIT_START
                 || scaleType == PreviewView.ScaleType.FIT_END);
@@ -1261,9 +1269,9 @@ public class MainActivity extends AppCompatActivity {
         m.setScale(scale, scale);
         m.postTranslate(dx, dy);
 
-        // 若你「沒有」手動把 Bitmap 旋轉正向，而是靠 setTargetRotation，
-        // 且你的偵測結果仍在感測器座標，這裡需加上旋轉矩陣。
-        // 不過你目前是把 Bitmap 旋轉為正向再送入模型，就不需要再旋轉。
+        //  𥅾雿𨬭 峕 埝 剹 齿 见 閙   Bitmap   贝 㗇迤  𡢅 諹 峕糓    setTargetRotation嚗
+        // 銝𥪯 删  菜葫蝯鞉 靝 滚銁  葫 膥摨扳 辷 屸 躰ㄐ    牐 𦠜 贝 厩畆 腼
+        // 銝漤 𦒘 删𤌍  齿糓    Bitmap   贝 厩 箸迤  穃 漤   交芋  页  停銝漤 閬  齿 贝 剹
         return m;
     }
 
@@ -1299,12 +1307,12 @@ public class MainActivity extends AppCompatActivity {
                     List<DetectorMain.Recognition> part = detector.detect(tile, w, h);
                     for (DetectorMain.Recognition rec : part) {
                         RectF b = new RectF(rec.getLocation());
-                        b.offset(x0, y0);  // 映回原圖
+                        b.offset(x0, y0);  //   惩 𧼮 笔
                         rec.setLocation(b);
                         all.add(rec);
                     }
                 } finally {
-                    tile.recycle(); // ✅ 這行很重要，避免記憶體壓力
+                    tile.recycle(); //     躰     滩 嚗屸 踹 滩 䀹 園 𥪜 枏
                 }
             }
         }
@@ -1327,7 +1335,7 @@ public class MainActivity extends AppCompatActivity {
 
         List<DetectorMain.Recognition> out = new ArrayList<>();
         for (List<DetectorMain.Recognition> grp : by.values()) {
-            out.addAll(nonMaxSuppression(grp, iouTh)); // 你原本的 NMS
+            out.addAll(nonMaxSuppression(grp, iouTh)); // 雿惩  𧋦   NMS
         }
         return out;
     }
@@ -1383,16 +1391,20 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private String voteColorOverFrames(RectF box, String current) {
-        // 清除過期
+        // 清理過期
         for (int i = tlTracks.size() - 1; i >= 0; i--) {
             if (frameIndex - tlTracks.get(i).seenFrame > TRACK_TTL) tlTracks.remove(i);
         }
 
-        // 尋找最像的 track（IoU 放寬到 0.30）
-        TLTrack best = null; float bestIou = 0f;
+        // 找最佳匹配 track
+        TLTrack best = null;
+        float bestIou = 0f;
         for (TLTrack t : tlTracks) {
             float iouVal = iou(t.box, box);
-            if (iouVal > bestIou && iouVal >= TRACK_IOU_MATCH) { best = t; bestIou = iouVal; }
+            if (iouVal > bestIou && iouVal >= TRACK_IOU_MATCH) {
+                best = t;
+                bestIou = iouVal;
+            }
         }
         if (best == null) {
             best = new TLTrack();
@@ -1407,31 +1419,54 @@ public class MainActivity extends AppCompatActivity {
 
         int idx = colorIdx(current);
 
-        // 若這幀不確定（unknown），維持穩定色並延長 hold 一點
+        // unknown 處理 - 給予更多容忍度
         if (idx == 0) {
-            if (best.stable != 0 && best.hold > 0) best.hold--;
-            return colorStr(best.stable != 0 ? best.stable : 0);
+            if (best.stable != 0) {
+                if (best.hold > COLOR_HOLD_FRAMES / 2) {
+                    return colorStr(best.stable);
+                } else if (best.hold > 0) {
+                    best.hold--;
+                    return colorStr(best.stable);
+                } else {
+                    best.stable = 0;
+                    best.cand = 0;
+                    best.streak = 0;
+                    return "unknown";
+                }
+            }
+            return "unknown";
         }
 
-        // 候選色連續統計
-        if (idx == best.cand) best.streak++;
-        else { best.cand = idx; best.streak = 1; }
-
-        // 若已確認且還在保留期，除非連續很久才允許切換
-        if (best.stable != 0 && best.cand != best.stable) {
-            if (best.streak >= COLOR_CONFIRM_FRAMES && best.hold <= 0) {
-                best.stable = best.cand;
-                best.hold   = COLOR_HOLD_FRAMES;
-            }
+        // 候選顏色連續計數
+        if (idx == best.cand) {
+            best.streak++;
         } else {
-            // 初次確認，或候選==穩定：重設保留
-            if (best.streak >= COLOR_CONFIRM_FRAMES) {
-                best.stable = best.cand;
-                best.hold   = COLOR_HOLD_FRAMES;
-            }
+            best.cand = idx;
+            best.streak = 1;
         }
 
-        return colorStr(best.stable);
+        // 顏色確認邏輯
+        if (best.stable != 0) {
+            if (best.cand != best.stable) {
+                if (best.streak >= COLOR_CONFIRM_FRAMES) {
+                    best.stable = best.cand;
+                    best.hold = COLOR_HOLD_FRAMES;
+                }
+            } else {
+                best.hold = COLOR_HOLD_FRAMES;
+            }
+        } else if (best.streak >= COLOR_CONFIRM_FRAMES) {
+            best.stable = best.cand;
+            best.hold = COLOR_HOLD_FRAMES;
+        }
+
+        // 🔧 關鍵修正：返回邏輯
+        if (best.stable != 0) {
+            return colorStr(best.stable);
+        } else {
+            // stable 還沒建立時，返回候選顏色而非 unknown
+            return colorStr(best.cand);
+        }
     }
 
     private float estimateDistanceByHeightPx(float boxHeightPx, float realHeightM) {
@@ -1479,10 +1514,10 @@ public class MainActivity extends AppCompatActivity {
         lastQueryLat = lat;
         lastQueryLng = lng;
 
-        // ✅ 重點：同時抓 highway 與 maxspeed（最近的前幾筆）
+        //      漤 痹 𡁜 峕     highway     maxspeed嚗  餈𤑳   滚嗾蝑 嚗
         String q = "[out:json][timeout:8];"
                 + "way(around:70," + lat + "," + lng + ")[\"highway\"];"
-                + "out tags center 10;"; // out center 會帶回中心點，通常依距離排序
+                + "out tags center 10;"; // out center   撣嗅 硺葉敹 暺痹 屸 𡁜虜靘肽 嗪𣪧  鍦
 
         Log.e("OSMSpeed", "QUERY=" + q);
 
@@ -1499,25 +1534,25 @@ public class MainActivity extends AppCompatActivity {
                 Integer decided = null;
 
                 if (body.elements != null) {
-                    // 依回傳順序（通常最近）挑第一個能決定速限的
+                    // 靘嘥 𧼮 喲 摨𧶏   𡁜虜  餈𡢅 㗇 𤑳洵銝  贝 賣捱摰𡁻 罸 鞟
                     for (OverpassResp.Element el : body.elements) {
                         if (el == null || el.tags == null) continue;
 
-                        // 1) 有 maxspeed → 直接用
+                        // 1)     maxspeed     凒 𦻖 鍂
                         Integer v = pickMaxspeedFromTags(el.tags);
                         if (v != null) { decided = v; break; }
 
-                        // 2) 沒有 maxspeed → 用 highway 類型推估
+                        // 2) 瘝埝   maxspeed     鍂 highway 憿𧼮 𧢲綫隡
                         String hw = el.tags.get("highway");
                         Integer guess = HighwaySpeedTable.fromHighway(hw);
                         if (guess != null) { decided = guess; break; }
                     }
                 }
 
-                // 最後兜底
-                if (decided == null) decided = DEFAULT_OSM_SPEED_KMH; // 仍給保守 50
+                //   敺  𨅯
+                if (decided == null) decided = DEFAULT_OSM_SPEED_KMH; // 隞滨策靽嘥   50
 
-                // ⚠️ 不再硬性 cap 在 50；若你想保險，可 cap 在 90
+                //   𩤃   銝滚 滨′   cap  銁 50嚗𥡝𥅾雿䭾 喃 嗪麬嚗 虾 cap  銁 90
                 // decided = Math.min(decided, 90);
 
                 currentSpeedLimitKmh = decided;
@@ -1532,7 +1567,7 @@ public class MainActivity extends AppCompatActivity {
 
             @Override public void onFailure(Call<OverpassResp> call, Throwable t) {
                 Log.e("OSMSpeed", "FAIL", t);
-                // 保留原速限；或你也可設定成 DEFAULT_OSM_SPEED_KMH
+                // 靽萘 坔 罸 罸 琜 𥟇 碶 牐 笔虾閮剖 𡁏   DEFAULT_OSM_SPEED_KMH
             }
         });
     }
@@ -1541,7 +1576,7 @@ public class MainActivity extends AppCompatActivity {
                                   final java.util.concurrent.atomic.AtomicBoolean triedWider) {
         if (overpassApi == null) return;
 
-        // 只抓有 highway 的 way，且帶有 maxspeed；只輸出 tags 省流量
+        //  蘨  𤘪   highway    way嚗䔶 𥪜葆    maxspeed嚗𥕦蘨頛詨枂 tags   瘚
         String q = "[out:json][timeout:8];"
                 + "way(around:" + radiusM + "," + lat + "," + lon + ")[\"highway\"][\"maxspeed\"];"
                 + "out tags;";
@@ -1565,7 +1600,7 @@ public class MainActivity extends AppCompatActivity {
                     return;
                 }
 
-                currentSpeedLimitKmh = kmh; // 可能為 null（未找到）
+                currentSpeedLimitKmh = kmh; //  虾 賜   null嚗 𧊋 𪄳  嚗
 
                 if (lastLocation != null) {
                     float sp = lastLocation.getSpeed() * 3.6f;
@@ -1575,16 +1610,14 @@ public class MainActivity extends AppCompatActivity {
             }
 
             @Override public void onFailure(retrofit2.Call<OverpassResp> call, Throwable t) {
-                // 失敗就先不更新，保留原值
+                // 憭望 堒停   齿凒 鰵嚗䔶 萘 坔 笔
             }
         });
     }
 
-    // =============== 超速提醒 Manager（最小可行版） ===============
     private static class SpeedAlertManager {
 
         interface SpeedLimitProvider {
-            /** 回傳該點（可帶 heading）之速限，km/h；-1 表示未知 */
             void getSpeedLimitAsync(double lat, double lon, float heading, Callback cb);
             interface Callback { void onResult(int speedLimitKmh); }
         }
@@ -1598,20 +1631,18 @@ public class MainActivity extends AppCompatActivity {
         private final SpeedLimitProvider provider;
         private final Notifier notifier;
 
-        // 參數（之後可做成設定）
-        private int   toleranceKmh   = 5;      // 固定容差
-        private float tolerancePct   = 0.10f;  // 百分比容差（10%）
-        private int   minHoldMs      = 3000;   // 需連續超速時間
-        private int   cooldownMs     = 20000;  // 提醒冷卻
-        private int   requeryMs      = 30000;  // 速限查詢間隔
+        //    彍嚗  见  虾 𡁏 鞱身摰𡄯
+        private int   toleranceKmh   = 5;      //  𤐄摰𡁜捆撌
+        private float tolerancePct   = 0.10f;  //  蓡  瘥𥪜捆撌殷  10%嚗
+        private int   minHoldMs      = 3000;   //      諹
+        private int   cooldownMs     = 20000;  //   鞾 鍦 瑕㭱
+        private int   requeryMs      = 30000;  //  罸 鞉䰻閰ａ 㯄
 
-        // 狀態
         private Integer lastLimit = null;
         private long lastLimitAt  = 0L;
         private long overspeedSince = 0L;
         private long lastAlertAt    = 0L;
 
-        // 簡單平滑
         private final java.util.ArrayDeque<Float> buf = new java.util.ArrayDeque<>(4);
 
         SpeedAlertManager(Context c, SpeedLimitProvider p, Notifier n) {
@@ -1622,19 +1653,19 @@ public class MainActivity extends AppCompatActivity {
 
         void onLocation(android.location.Location loc) {
             if (loc == null) return;
-            if (loc.getAccuracy() > 25f) return; // 精度太差先跳過
+            if (loc.getAccuracy() > 25f) return; // 蝎曉漲憭芸榆  歲
 
-            // 速度（km/h）＋簡單移動平均
+            //  笔漲嚗ɑm/h嚗㚁 讠陛 鱓蝘餃 訫像
             float v = loc.getSpeed() * 3.6f;
             if (buf.size() == 4) buf.removeFirst();
             buf.addLast(v);
             float speed = 0f; for (Float x: buf) speed += x; speed /= buf.size();
             int spd = Math.round(speed);
 
-            // 方向（部分 map matching 會用到）
+            //  䲮  𡢅   典  map matching    鍂  嚗
             float heading = loc.hasBearing() ? loc.getBearing() : Float.NaN;
 
-            // 速限過舊或未知就查一次（之後你可改成：換道路/位移超過一定距離再查）
+            //  罸 鞾 舘 𦠜 𡝗𧊋 䰻撠望䰻銝 甈∴   见 䔶 惩虾 㺿  琜 𡁏 偦 栞楝/雿滨宏頞  𦒘 摰朞 嗪𣪧 齿䰻嚗
             long now = android.os.SystemClock.uptimeMillis();
             if (lastLimit == null || now - lastLimitAt > requeryMs) {
                 final double lat = loc.getLatitude(), lon = loc.getLongitude();
@@ -1677,16 +1708,16 @@ public class MainActivity extends AppCompatActivity {
         java.util.List<Element> elements;
     }
 
-    // === UI 顯示「時速」 ===
+    // === UI 憿舐內 峕  麄   ===
     private void updateSpeedUi(float speedKmh) {
-        tvSpeed.setText(String.format(java.util.Locale.TAIWAN, "時速：%.1f km/h ", speedKmh));
+        tvSpeed.setText(String.format(java.util.Locale.TAIWAN, "      %.1f km/h ", speedKmh));
     }
 
     public static final class HighwaySpeedTable {
         private HighwaySpeedTable() {}
         public static Integer fromHighway(String highway) {
 
-            if (highway == null) return 50; // 最後兜底
+            if (highway == null) return 50; //   敺  𨅯
             switch (highway) {
                 case "motorway":
                     return null;
@@ -1707,7 +1738,7 @@ public class MainActivity extends AppCompatActivity {
             }
         }
     }
-    // === 超速提醒（沿用你原本的語音/通知） ===
+    // === 頞    鞾 𡜐  窒 鍂雿惩  𧋦  隤鮋𨺗/ 𡁶䰻嚗  ===
     private void maybeAlertOverspeed(float speedKmh, Integer limitKmh) {
         if (limitKmh == null || limitKmh <= 0) return;
 
@@ -1721,19 +1752,19 @@ public class MainActivity extends AppCompatActivity {
             if (held && cooled) {
                 lastNotifMs = now;
                 speakOnce(String.format(java.util.Locale.TAIWAN,
-                        "超速提醒，目前 %.0f，限速 %d，請減速", speedKmh, limitKmh));
+                        "頞    鞾 𡜐 𣬚𤌍    %.0f嚗屸 鞾   %d嚗諹 𧢲 偦  ", speedKmh, limitKmh));
                 if (isVibrationEnabled) triggerMiBandVibration();
-                sendAlertNotification("超速提醒",
-                        String.format(java.util.Locale.TAIWAN, "目前 %.0f km/h，限速 %d km/h，請減速", speedKmh, limitKmh));
+                sendAlertNotification("頞    鞾  ",
+                        String.format(java.util.Locale.TAIWAN, " 𤌍    %.0f km/h嚗屸 鞾   %d km/h嚗諹 𧢲 偦  ", speedKmh, limitKmh));
             }
         } else {
-            overspeedSinceMs = 0L; // 一降速就重算
+            overspeedSinceMs = 0L; // 銝   漤 笔停  滨
         }
     }
 
-    // === Haversine：兩點距離（公尺） ===
+    // === Haversine嚗𡁜 拚 噼 嗪𣪧嚗  砍偕嚗  ===
     private static float distanceMeters(float lat1, float lon1, float lat2, float lon2) {
-        double R = 6371000.0; // 地球半徑
+        double R = 6371000.0; //  𧑐    𠰴
         double dLat = Math.toRadians(lat2 - lat1);
         double dLon = Math.toRadians(lon2 - lon1);
         double a = Math.sin(dLat/2)*Math.sin(dLat/2)
@@ -1748,7 +1779,7 @@ public class MainActivity extends AppCompatActivity {
         if (raw == null) return null;
         String s = raw.trim().toLowerCase();
 
-        // 常見非數值
+        // 撣貉 钅 墧彍
         if (s.equals("none") || s.equals("signals") || s.equals("variable") || s.equals("walk")) return null;
 
         // mph
@@ -1759,14 +1790,14 @@ public class MainActivity extends AppCompatActivity {
             } catch (Exception ignore) {}
         }
 
-        // km/h 或 kph
+        // km/h     kph
         if (s.endsWith("km/h") || s.endsWith("kph")) {
             try {
                 return Integer.parseInt(s.replace("km/h","").replace("kph","").trim());
             } catch (Exception ignore) {}
         }
 
-        // 純數字（或夾雜字元取數字）
+        // 蝝娍彍摮梹   硋冗  𨅯 堒    𡝗彍摮梹
         try {
             String digits = s.replaceAll("[^0-9]", "");
             if (!digits.isEmpty()) return Integer.parseInt(digits);
@@ -1789,7 +1820,7 @@ public class MainActivity extends AppCompatActivity {
         v = parseMaxspeed(tags.get("maxspeed"));
         if (v != null) return v;
 
-        // 其他像 GB:nsl_single、TW:urban 之類國別代碼先略過（需要對照表就再加）
+        //  嗡 硋   GB:nsl_single  TW:urban 銋钅 𧼮 见ê̌隞 Ⅳ  裦 𠬍   閬 撠滨 扯”撠勗 滚 𩤃
         return null;
     }
 }
