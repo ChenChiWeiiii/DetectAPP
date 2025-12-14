@@ -47,7 +47,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="48dp"
                 android:gravity="center"
-                android:text="Hello"
+                android:text="您好"
                 android:textSize="36dp"
                 android:textStyle="bold" />
 
@@ -57,7 +57,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
                 android:gravity="center"
-                android:text="Sign in to your account"
+                android:text="請登入您的帳號"
                 android:textSize="24dp"
                 android:textStyle="bold" />
 
@@ -68,7 +68,7 @@
                 android:layout_marginTop="32dp"
                 android:background="@drawable/rounded_edittext"
                 android:elevation="4dp"
-                android:hint="Email"
+                android:hint="信箱"
                 android:inputType="textEmailAddress"
                 android:padding="16dp" />
 
@@ -79,7 +79,7 @@
                 android:layout_marginTop="16dp"
                 android:background="@drawable/rounded_edittext"
                 android:elevation="4dp"
-                android:hint="Password"
+                android:hint="密碼"
                 android:inputType="textPassword"
                 android:padding="16dp" />
 
@@ -89,7 +89,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
                 android:layout_gravity="end"
-                android:text="Forgot Password?"
+                android:text="忘記密碼"
                 android:textColor="#1E88E5"
                 android:textSize="14dp" />
 
@@ -113,7 +113,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:paddingEnd="8dp"
-                    android:text="Sign in"
+                    android:text="登入"
                     android:textColor="#FFFFFF"
                     android:textSize="14sp" />
 
@@ -133,7 +133,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="16dp"
                 android:gravity="center"
-                android:text="Don't have an account? Sign Up"
+                android:text="註冊帳號"
                 android:textColor="#1E88E5"
                 android:textSize="14dp" />
 

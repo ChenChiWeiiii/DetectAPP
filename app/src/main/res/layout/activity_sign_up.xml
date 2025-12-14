@@ -48,7 +48,7 @@
                 android:id="@+id/signupTitle"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Create Account"
+                android:text="創建帳號"
                 android:textSize="24dp"
                 android:textStyle="bold"
                 android:layout_marginTop="12dp"
@@ -61,7 +61,7 @@
                 android:layout_marginTop="32dp"
                 android:background="@drawable/rounded_edittext"
                 android:elevation="4dp"
-                android:hint="Username"
+                android:hint="使用者名稱"
                 android:inputType="textPersonName"
                 android:padding="16dp" />
 
@@ -72,7 +72,7 @@
                 android:layout_marginTop="16dp"
                 android:background="@drawable/rounded_edittext"
                 android:elevation="4dp"
-                android:hint="Email"
+                android:hint="信箱"
                 android:inputType="textEmailAddress"
                 android:padding="16dp" />
 
@@ -83,7 +83,7 @@
                 android:layout_marginTop="16dp"
                 android:background="@drawable/rounded_edittext"
                 android:elevation="4dp"
-                android:hint="Password"
+                android:hint="密碼"
                 android:inputType="textPassword"
                 android:padding="16dp" />
 
@@ -94,7 +94,7 @@
                 android:layout_marginTop="16dp"
                 android:background="@drawable/rounded_edittext"
                 android:elevation="4dp"
-                android:hint="Confirm Password"
+                android:hint="確認密碼"
                 android:inputType="textPassword"
                 android:padding="16dp" />
 
@@ -116,7 +116,7 @@
                     android:id="@+id/signInText"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Sign Up"
+                    android:text="註冊"
                     android:textColor="#FFFFFF"
                     android:textSize="14dp"
                     android:paddingStart="16dp"
@@ -138,7 +138,7 @@
                 android:id="@+id/tv_back"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Already have an account? Login"
+                android:text="已經擁有帳號了? 前往登入畫面"
                 android:textColor="#1E88E5"
                 android:textSize="14dp"
                 android:layout_marginTop="16dp"
