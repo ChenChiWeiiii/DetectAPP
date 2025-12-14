@@ -592,71 +592,34 @@ public class MainActivity extends AppCompatActivity {
 
         Bitmap bmp = reusableBmp.get();
         if (bmp == null || bmp.getWidth() != w || bmp.getHeight() != h) {
+            if (bmp != null && !bmp.isRecycled()) {
+                bmp.recycle();
+            }
             bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
             reusableBmp.set(bmp);
         }
+
         ByteBuffer buf = plane.getBuffer();
         buf.rewind();
         bmp.copyPixelsFromBuffer(buf);
 
-        //    閬   𠰴 讐 䭾 贝 匧 甇  𡢅   漤   PreviewView嚗
-        int rotation = image.getImageInfo().getRotationDegrees();
-        if (rotation != 0) {
+        int imgRotation = image.getImageInfo().getRotationDegrees();
+        if (imgRotation != 0) {
             Matrix m = new Matrix();
-            m.postRotate(rotation);
-            bmp = Bitmap.createBitmap(bmp, 0, 0, w, h, m, true);
+            m.postRotate(imgRotation);
+            Bitmap rotated = Bitmap.createBitmap(bmp, 0, 0, w, h, m, true);
+
+            if (rotated != bmp) {
+                reusableBmp.set(rotated);
+            }
+
+            return rotated;
         }
+
         return bmp;
     }
 
-    private Bitmap imageToBitmap(ImageProxy image) {
-        // 1.   嚉    贝 㕑 鍦漲
-        int rotation = image.getImageInfo().getRotationDegrees();
 
-        // 2. NV21 -> JPEG ->   笔   Bitmap嚗ǐaw嚗
-        ImageProxy.PlaneProxy[] planes = image.getPlanes();
-        ByteBuffer yBuffer = planes[0].getBuffer();
-        ByteBuffer uBuffer = planes[1].getBuffer();
-        ByteBuffer vBuffer = planes[2].getBuffer();
-
-        int ySize = yBuffer.remaining();
-        int uSize = uBuffer.remaining();
-        int vSize = vBuffer.remaining();
-        byte[] nv21 = new byte[ySize + uSize + vSize];
-        yBuffer.get(nv21, 0, ySize);
-        vBuffer.get(nv21, ySize, vSize);
-        uBuffer.get(nv21, ySize + vSize, uSize);
-
-//        android.graphics.Rect crop = image.getCropRect();
-//
-//        YuvImage yuv = new YuvImage(nv21, ImageFormat.NV21,
-//                image.getWidth(), image.getHeight(), null);
-//        ByteArrayOutputStream out = new ByteArrayOutputStream();
-//        yuv.compressToJpeg(
-//                new android.graphics.Rect(0, 0, image.getWidth(), image.getHeight()),
-//                100,
-//                out
-//        );
-
-        android.graphics.Rect crop = image.getCropRect();
-
-        YuvImage yuv = new YuvImage(nv21, ImageFormat.NV21, image.getWidth(), image.getHeight(), null);
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-
-        yuv.compressToJpeg(crop, 100, out);
-
-        byte[] jpeg = out.toByteArray();
-        Bitmap raw = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length);
-
-        // 3.  鍂 Matrix     raw   贝 匧 甇 Ⅱ 䲮
-        Matrix m = new Matrix();
-        m.postRotate(rotation);
-        Bitmap rotated = Bitmap.createBitmap(
-                raw, 0, 0, raw.getWidth(), raw.getHeight(), m, true);
-
-        // 4.   𧼮 喟鳥甇  𣬚  Bitmap
-        return rotated;
-    }
 
     private final int[] pvLoc = new int[2];
     private final int[] ovLoc = new int[2];
