@@ -832,7 +832,7 @@ public class MainActivity extends AppCompatActivity {
             }
         }
         if (requestCode == REQUEST_BLUETOOTH_PERMISSIONS) {
-            Log.d("MiBand", " 𤣰    滨 蹱 𢠃 鞟 鞉  ");
+            Log.d("MiBand", "收到藍牙權限結果");
             boolean granted = true;
             for (int result : grantResults) {
                 if (result != PackageManager.PERMISSION_GRANTED) {
@@ -841,11 +841,11 @@ public class MainActivity extends AppCompatActivity {
                 }
             }
             if (granted) {
-                Log.d("MiBand", "  滨 蹱 𢠃 𣂼歇    𠺪 屸 见 𧢲    ");
+                Log.d("MiBand", "藍牙權限已授權，開始掃描");
                 ensureMiBandConnected();
                 //scanAndConnectMiBand();
             } else {
-                Toast.makeText(this, " 𧊋    𡃏 滨 蹱 𢠃 琜 𣬚 ⊥ 閖   𡁏 讠兛", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "未授權藍牙權限，無法連線手環", Toast.LENGTH_SHORT).show();
             }
         }
     }
@@ -946,20 +946,20 @@ public class MainActivity extends AppCompatActivity {
         switch (sensitivityLevel) {
             case 3:
                 if (personDistance <= 20f) {
-                    speakOnce("  齿䲮  㕑 䔶犖嚗諹 𧢲釣  ");
-                    sendAlertNotification("銵䔶犖  㰘  ", "  齿䲮  㕑 䔶犖嚗諹 见 誩  Ｚ  ");
+                    speakOnce("前方有行人，請注意");
+                    sendAlertNotification("行人靠近", "前方有行人，請小心慢行");
                 }
                 break;
             case 2:
                 if (hasCrosswalk && personDistance <= 15f) {
-                    speakOnce("銵䔶犖皞硋 䠷 𡡞收頝荔 諹 𧢲 偦  ");
-                    sendAlertNotification("銵䔶犖  㰘  ", "  齿䲮  㕑 䔶犖嚗諹 见 誩  Ｚ  ");
+                    speakOnce("行人準備過馬路，請減速");
+                    sendAlertNotification("行人靠近", "前方有行人，請小心慢行");
                 }
                 break;
             case 1:
                 if (hasCrosswalk && personDistance <= 10f && "green".equals(trafficLightColor)) {
-                    speakOnce("蝬删   罸 𤘪 㕑 䔶犖 𡡞收頝荔 諹 贝 栞  ");
-                    sendAlertNotification("銵䔶犖  㰘  ", "  齿䲮  㕑 䔶犖嚗諹 见 誩  Ｚ  ");
+                    speakOnce("綠燈期間有行人過馬路，請讓行");
+                    sendAlertNotification("行人靠近", "前方有行人，請小心慢行");
                 }
                 break;
         }
@@ -1715,10 +1715,10 @@ public class MainActivity extends AppCompatActivity {
             if (held && cooled) {
                 lastNotifMs = now;
                 speakOnce(String.format(java.util.Locale.TAIWAN,
-                        "頞    鞾 𡜐 𣬚𤌍    %.0f嚗屸 鞾   %d嚗諹 𧢲 偦  ", speedKmh, limitKmh));
+                        "超速提醒，目前 %.0f，限速 %d，請減速", speedKmh, limitKmh));
                 if (isVibrationEnabled) triggerMiBandVibration();
-                sendAlertNotification("頞    鞾  ",
-                        String.format(java.util.Locale.TAIWAN, " 𤌍    %.0f km/h嚗屸 鞾   %d km/h嚗諹 𧢲 偦  ", speedKmh, limitKmh));
+                sendAlertNotification("超速提醒",
+                        String.format(java.util.Locale.TAIWAN, "目前 %.0f km/h，限速 %d km/h，請減速", speedKmh, limitKmh));
             }
         } else {
             overspeedSinceMs = 0L; // 銝   漤 笔停  滨
