@@ -911,59 +911,62 @@ public class MainActivity extends AppCompatActivity {
         String trafficLightColor = "unknown";
 
         for (DetectorMain.Recognition r : recognitions) {
-            Log.d("DEBUG_DET", "Detected title=" + r.getTitle()
-                    + "  bbox=" + r.getLocation()
-                    + "  conf=" + r.getConfidence());
+            Log.d("DEBUG_DET", "Detected title=" + r.getTitle() + " bbox=" + r.getLocation() + " conf=" + r.getConfidence());
         }
 
         for (DetectorMain.Recognition r : recognitions) {
             String title = r.getTitle().toLowerCase();
             RectF loc = r.getLocation();
 
+            // ===== ✅ 只計算行人(person)的距離 =====
             if (title.contains("person")) {
                 hasPerson = true;
                 float hView = loc.height();
                 float scale = Math.max(getCurrentScale(), 1e-6f);
-                float hImg  = hView / scale;
+                float hImg = hView / scale;
                 personDistance = finalizeDistance(estimateDistanceByHeightPx(hImg, H_PERSON));
             }
 
+            // ===== ✅ 斑馬線(crosswalk)只標記存在，不計算距離 =====
             if (title.contains("crosswalk")) {
                 hasCrosswalk = true;
             }
 
+            // ===== ✅ 紅綠燈(traffic_light)只記錄顏色，不計算距離 =====
             if (title.contains("traffic")) {
-                //  凒 𦻖霈   硋 𥕦 𥕦銁 analyzer 摮睃末  憿讛𠧧
                 String color = r.getColor();
-                Log.d("DEBUG_TL", "TrafficLight color (  𣂼   菜葫) = " + color);
+                Log.d("DEBUG_TL", "TrafficLight color=" + color);
                 trafficLightColor = color;
             }
-
         }
 
-        if (!hasPerson || personDistance < 0) return;
+        if (!hasPerson || personDistance <= 0) {
+            return;
+        }
 
+        // ===== 警報邏輯（保持不變）=====
         switch (sensitivityLevel) {
             case 3:
                 if (personDistance <= 20f) {
-                    speakOnce("前方有行人，請注意");
-                    sendAlertNotification("行人靠近", "前方有行人，請小心慢行");
+                    speakOnce("前方有行人");
+                    sendAlertNotification("行人警報", "前方有行人");
                 }
                 break;
             case 2:
                 if (hasCrosswalk && personDistance <= 15f) {
-                    speakOnce("行人準備過馬路，請減速");
-                    sendAlertNotification("行人靠近", "前方有行人，請小心慢行");
+                    speakOnce("前方有行人");
+                    sendAlertNotification("行人警報", "前方有行人");
                 }
                 break;
             case 1:
                 if (hasCrosswalk && personDistance <= 10f && "green".equals(trafficLightColor)) {
-                    speakOnce("綠燈期間有行人過馬路，請讓行");
-                    sendAlertNotification("行人靠近", "前方有行人，請小心慢行");
+                    speakOnce("前方有行人");
+                    sendAlertNotification("行人警報", "前方有行人");
                 }
                 break;
         }
     }
+
 
     private float estimateTrafficLightDistance(List<DetectorMain.Recognition> recognitions) {
         float scale = Math.max(getCurrentScale(), 1e-6f);
